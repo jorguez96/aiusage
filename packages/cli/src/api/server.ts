@@ -919,7 +919,7 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
 
         if (df.useUnion) {
           const unionSql = `
-            SELECT model, provider,
+            SELECT model, provider, gateway,
                    COUNT(*) AS callCount,
                    SUM(input_tokens) AS inputTokens,
                    SUM(output_tokens) AS outputTokens,
@@ -929,9 +929,9 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
                    SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens + thinking_tokens) AS totalTokens,
                    SUM(cost) AS totalCost
             FROM records WHERE 1=1 ${dr.where} ${df.localOnly ? LOCAL_ONLY_FILTER : ''} ${tf.where}
-            GROUP BY model, provider
+            GROUP BY model, provider, gateway
             UNION ALL
-            SELECT model, provider,
+            SELECT model, provider, gateway,
                    COUNT(*) AS callCount,
                    SUM(input_tokens) AS inputTokens,
                    SUM(output_tokens) AS outputTokens,
@@ -941,10 +941,10 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
                    SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens + thinking_tokens) AS totalTokens,
                    SUM(cost) AS totalCost
             FROM synced_records WHERE device_instance_id != @currentDeviceId ${dr.where} ${tf.where}
-            GROUP BY model, provider
+            GROUP BY model, provider, gateway
           `
           const mergedRows = db.prepare(`
-            SELECT model, provider,
+            SELECT model, provider, gateway,
                    SUM(callCount) AS callCount,
                    SUM(inputTokens) AS inputTokens,
                    SUM(outputTokens) AS outputTokens,
@@ -955,13 +955,13 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
                    SUM(totalCost) AS totalCost
             FROM (${unionSql})
             WHERE model != 'unknown'
-            GROUP BY model, provider ORDER BY totalTokens DESC
+            GROUP BY model, provider, gateway ORDER BY totalTokens DESC
           `).all({ ...dr.params, ...df.params, ...tf.params }) as any[]
           totalTokensAcrossModels = mergedRows.reduce((sum, row) => sum + row.totalTokens, 0)
           rows = mergedRows
         } else if (device && device !== options?.currentDeviceInstanceId) {
           rows = db.prepare(`
-            SELECT model, provider,
+            SELECT model, provider, gateway,
                    COUNT(*) AS callCount,
                    SUM(input_tokens) AS inputTokens,
                    SUM(output_tokens) AS outputTokens,
@@ -971,12 +971,12 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
                    SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens + thinking_tokens) AS totalTokens,
                    SUM(cost) AS totalCost
             FROM synced_records WHERE 1=1 AND model != 'unknown' ${df.where} ${dr.where} ${tf.where}
-            GROUP BY model, provider ORDER BY totalTokens DESC
+            GROUP BY model, provider, gateway ORDER BY totalTokens DESC
           `).all({ ...df.params, ...dr.params, ...tf.params }) as any[]
           totalTokensAcrossModels = rows.reduce((sum, row) => sum + row.totalTokens, 0)
         } else {
           rows = db.prepare(`
-            SELECT model, provider,
+            SELECT model, provider, gateway,
                    COUNT(*) AS callCount,
                    SUM(input_tokens) AS inputTokens,
                    SUM(output_tokens) AS outputTokens,
@@ -986,7 +986,7 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
                    SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens + thinking_tokens) AS totalTokens,
                    SUM(cost) AS totalCost
             FROM records WHERE 1=1 AND model != 'unknown' ${dr.where} ${df.localOnly ? LOCAL_ONLY_FILTER : ''} ${tf.where}
-            GROUP BY model, provider ORDER BY totalTokens DESC
+            GROUP BY model, provider, gateway ORDER BY totalTokens DESC
           `).all({ ...dr.params, ...tf.params }) as any[]
           totalTokensAcrossModels = rows.reduce((sum, row) => sum + row.totalTokens, 0)
         }
@@ -994,6 +994,7 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
         const models = rows.map(r => ({
           model: r.model,
           provider: r.provider,
+          gateway: r.gateway ?? null,
           callCount: r.callCount,
           inputTokens: r.inputTokens,
           outputTokens: r.outputTokens,

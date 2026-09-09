@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3'
 import type { StatsRecord, ToolCallRecord } from '@aiusage/core'
-import { calculateCost, generateRecordId, generateOrphanToolCallId, inferProvider } from '@aiusage/core'
+import { calculateCost, generateRecordId, generateOrphanToolCallId, inferProvider, resolveGateway } from '@aiusage/core'
 import type { ZcodeCursor, ZcodeToolCursor } from '../watermark.js'
 
 export type { ZcodeCursor, ZcodeToolCursor }
@@ -35,6 +35,8 @@ interface ZcodeModelUsageRow {
   cache_creation_input_tokens: number
   cache_read_input_tokens: number
   directory?: string | null
+  provider?: string | null
+  gateway?: string | null
 }
 
 interface ZcodeToolUsageRow {
@@ -58,6 +60,10 @@ function normalizeZcodeModel(value: unknown): string {
   return trimmed.toLowerCase()
 }
 
+function hasColumn(db: Database.Database, table: string, column: string): boolean {
+  return (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).some(row => row.name === column)
+}
+
 /**
  * Parse ZCode CLI usage data from its SQLite database.
  *
@@ -79,11 +85,15 @@ export function runParseZcode(db: Database.Database, options: ZcodeImportOptions
   let nextToolCursor: ZcodeToolCursor | null = null
 
   // --- Token records (model_usage) ---
+  const providerExpr = hasColumn(db, 'model_usage', 'provider') ? 'm.provider' : 'NULL AS provider'
+  const gatewayExpr = hasColumn(db, 'model_usage', 'gateway')
+    ? 'm.gateway'
+    : hasColumn(db, 'model_usage', 'provider') ? 'm.provider AS gateway' : 'NULL AS gateway'
   const modelRows = db.prepare(`
     SELECT m.id, m.session_id, m.model_id, m.started_at,
            m.input_tokens, m.output_tokens, m.reasoning_tokens,
            m.cache_creation_input_tokens, m.cache_read_input_tokens,
-           s.directory
+           s.directory, ${providerExpr}, ${gatewayExpr}
     FROM model_usage m
     LEFT JOIN session s ON s.id = m.session_id
     WHERE m.status = 'completed'
@@ -108,6 +118,7 @@ export function runParseZcode(db: Database.Database, options: ZcodeImportOptions
 
     const model = normalizeZcodeModel(row.model_id)
     const provider = inferProvider(model)
+    const gateway = resolveGateway(row.gateway, row.provider)
     const ts = Number(row.started_at) || now
     const recordId = generateRecordId(deviceInstanceId, `${dbPath}:${row.id}`, ts)
 
@@ -123,6 +134,7 @@ export function runParseZcode(db: Database.Database, options: ZcodeImportOptions
       tool: 'zcode',
       model,
       provider,
+      gateway,
       inputTokens,
       outputTokens,
       cacheReadTokens,

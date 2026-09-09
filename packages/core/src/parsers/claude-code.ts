@@ -1,7 +1,7 @@
 import type { Parser, ParseResult, ParseContext } from '../types.js'
 import type { StatsRecord, ToolCallRecord, Tool } from '../types.js'
 import { generateRecordId, generateToolCallId } from '../record-id.js'
-import { inferProvider } from '../provider.js'
+import { inferProvider, resolveGateway } from '../provider.js'
 import { calculateCost } from '../pricing.js'
 
 export class ClaudeCodeParser implements Parser {
@@ -56,6 +56,7 @@ export class ClaudeCodeParser implements Parser {
       tool: this.tool,
       model,
       provider,
+      gateway: resolveGateway(parsed.gateway, parsed.provider, parsed.message?.gateway, parsed.message?.provider, parsed.message?.baseUrl, parsed.message?.baseURL),
       inputTokens,
       outputTokens,
       cacheReadTokens,

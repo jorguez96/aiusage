@@ -16,6 +16,7 @@ export function createReadonlyViews(db: Database.Database): void {
       tool,
       model,
       provider,
+      gateway,
       input_tokens,
       output_tokens,
       cache_read_tokens,
@@ -45,6 +46,7 @@ export function createReadonlyViews(db: Database.Database): void {
       r.tool,
       r.model,
       r.provider,
+      r.gateway,
       r.session_id,
       r.source_file,
       r.device,
@@ -58,6 +60,7 @@ export function createReadonlyViews(db: Database.Database): void {
       tool,
       model,
       provider,
+      gateway,
       device,
       device_instance_id,
       COUNT(*) AS record_count,
@@ -73,7 +76,7 @@ export function createReadonlyViews(db: Database.Database): void {
       SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens + thinking_tokens) AS total_tokens,
       SUM(cost) AS total_cost
     FROM records
-    GROUP BY session_id, tool, model, provider, device, device_instance_id;
+    GROUP BY session_id, tool, model, provider, gateway, device, device_instance_id;
   `)
 }
 
@@ -98,6 +101,7 @@ export function createV1Schema(db: Database.Database): void {
       tool              TEXT NOT NULL,
       model             TEXT NOT NULL,
       provider          TEXT NOT NULL,
+      gateway           TEXT,
       input_tokens      INTEGER DEFAULT 0,
       output_tokens     INTEGER DEFAULT 0,
       cache_read_tokens INTEGER DEFAULT 0,
@@ -117,6 +121,7 @@ export function createV1Schema(db: Database.Database): void {
       tool              TEXT NOT NULL,
       model             TEXT NOT NULL,
       provider          TEXT NOT NULL,
+      gateway           TEXT,
       input_tokens      INTEGER DEFAULT 0,
       output_tokens     INTEGER DEFAULT 0,
       cache_read_tokens INTEGER DEFAULT 0,
@@ -162,12 +167,14 @@ export function createV1Schema(db: Database.Database): void {
     CREATE INDEX idx_records_updated    ON records(updated_at DESC);
     CREATE INDEX idx_records_tool       ON records(tool);
     CREATE INDEX idx_records_model      ON records(model);
+    CREATE INDEX idx_records_gateway    ON records(gateway);
     CREATE INDEX idx_records_session    ON records(session_id);
     CREATE INDEX idx_records_source     ON records(source_file);
     CREATE INDEX idx_records_cost_source ON records(cost_source);
     CREATE INDEX idx_synced_records_ts      ON synced_records(ts DESC);
     CREATE INDEX idx_synced_records_tool    ON synced_records(tool);
     CREATE INDEX idx_synced_records_model   ON synced_records(model);
+    CREATE INDEX idx_synced_records_gateway ON synced_records(gateway);
     CREATE INDEX idx_synced_records_session ON synced_records(session_key);
     CREATE INDEX idx_synced_records_device  ON synced_records(device);
     CREATE INDEX idx_synced_records_updated ON synced_records(updated_at DESC);

@@ -16,6 +16,7 @@ function insertTestRecord(db: Database.Database, overrides: Record<string, unkno
     tool: 'claude-code',
     model: 'claude-sonnet-4-6',
     provider: 'anthropic',
+    gateway: null,
     input_tokens: 100,
     output_tokens: 50,
     cache_read_tokens: 0,
@@ -31,11 +32,11 @@ function insertTestRecord(db: Database.Database, overrides: Record<string, unkno
   const vals = { ...defaults, ...overrides }
   db.prepare(`
     INSERT INTO records (id, ts, ingested_at, synced_at, updated_at, line_offset,
-      tool, model, provider, input_tokens, output_tokens, cache_read_tokens,
+      tool, model, provider, gateway, input_tokens, output_tokens, cache_read_tokens,
       cache_write_tokens, thinking_tokens, cost, cost_source, session_id,
       source_file, device, device_instance_id)
     VALUES (@id, @ts, @ingested_at, @synced_at, @updated_at, @line_offset,
-      @tool, @model, @provider, @input_tokens, @output_tokens, @cache_read_tokens,
+      @tool, @model, @provider, @gateway, @input_tokens, @output_tokens, @cache_read_tokens,
       @cache_write_tokens, @thinking_tokens, @cost, @cost_source, @session_id,
       @source_file, @device, @device_instance_id)
   `).run(vals)
@@ -48,6 +49,7 @@ function insertTestSyncedRecord(db: Database.Database, overrides: Record<string,
     tool: 'codex',
     model: 'gpt-4.1',
     provider: 'openai',
+    gateway: null,
     input_tokens: 200,
     output_tokens: 100,
     cache_read_tokens: 0,
@@ -62,10 +64,10 @@ function insertTestSyncedRecord(db: Database.Database, overrides: Record<string,
   }
   const vals = { ...defaults, ...overrides }
   db.prepare(`
-    INSERT INTO synced_records (id, ts, tool, model, provider, input_tokens, output_tokens,
+    INSERT INTO synced_records (id, ts, tool, model, provider, gateway, input_tokens, output_tokens,
       cache_read_tokens, cache_write_tokens, thinking_tokens, cost, cost_source,
       session_key, device, device_instance_id, updated_at)
-    VALUES (@id, @ts, @tool, @model, @provider, @input_tokens, @output_tokens,
+    VALUES (@id, @ts, @tool, @model, @provider, @gateway, @input_tokens, @output_tokens,
       @cache_read_tokens, @cache_write_tokens, @thinking_tokens, @cost, @cost_source,
       @session_key, @device, @device_instance_id, @updated_at)
   `).run(vals)
@@ -843,6 +845,33 @@ describe('Device filtering', () => {
     })
     expect(model.totalCost).toBeCloseTo(0.007)
     expect(model.percentage).toBeCloseTo(64.3, 1)
+  })
+
+  it('groups the same model separately by serving gateway', async () => {
+    insertTestRecord(db, {
+      id: 'gateway-opencode-go',
+      tool: 'pi',
+      model: 'glm-5.3-flash',
+      provider: 'zhipu',
+      gateway: 'opencode-go',
+      session_id: 'gateway-session-a',
+    })
+    insertTestRecord(db, {
+      id: 'gateway-zhipu',
+      tool: 'pi',
+      model: 'glm-5.3-flash',
+      provider: 'zhipu',
+      gateway: 'zhipu',
+      session_id: 'gateway-session-b',
+    })
+
+    const response = await fetch(`${baseUrl}/api/models?range=all&tool=pi`)
+    expect(response.ok).toBe(true)
+    const data = await response.json()
+    expect(data.models).toEqual(expect.arrayContaining([
+      expect.objectContaining({ model: 'glm-5.3-flash', gateway: 'opencode-go', callCount: 1 }),
+      expect.objectContaining({ model: 'glm-5.3-flash', gateway: 'zhipu', callCount: 1 }),
+    ]))
   })
 
   it('models returns an empty list when only unknown models match', async () => {

@@ -83,6 +83,19 @@ Docker persists AIUsage data with the `~/.aiusage` mount. To parse AI tool logs 
 
 Full CLI reference: [aiusage.jtanx.com/docs#cli-reference](https://aiusage.jtanx.com/docs#cli-reference).
 
+### Serving gateway attribution
+
+Records include a nullable `gateway` field when the source log identifies the
+serving endpoint or credential (for example, pi records served through
+`opencode-go`). The dashboard's Models view and `/api/models` group by model,
+provider, and gateway; CSV, JSON, NDJSON, and sync data carry the same field.
+When a source does not expose a gateway, `gateway` remains empty and the
+existing model-derived `provider` behavior is retained. Legacy rows are not
+retroactively relabeled. Positive costs reported by a source log are preferred
+when available. Gateway-specific rate cards are not guessed: when a source does
+not log a positive cost, the model pricing registry remains the fallback and
+the row is not silently gateway-price-adjusted.
+
 ## Supported Tools
 
 | | | | | |

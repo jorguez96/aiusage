@@ -1,5 +1,5 @@
 import type { StatsRecord } from '@aiusage/core'
-import { calculateCost, generateRecordId, inferProvider } from '@aiusage/core'
+import { calculateCost, generateRecordId, inferProvider, resolveGateway } from '@aiusage/core'
 import { readFileSync } from 'node:fs'
 import { basename } from 'node:path'
 import * as yauzl from 'yauzl'
@@ -164,6 +164,7 @@ export async function runParseKelivo(options: KelivoImportOptions): Promise<Keli
       tool: 'kelivo',
       model,
       provider,
+      gateway: resolveGateway(message.providerId),
       inputTokens,
       outputTokens,
       cacheReadTokens,

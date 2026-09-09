@@ -34,12 +34,12 @@ export function insertRecord(db: Database.Database, record: StatsRecord): void {
   db.prepare(`
     INSERT OR REPLACE INTO records (
       id, ts, ingested_at, synced_at, updated_at, line_offset,
-      tool, model, provider, input_tokens, output_tokens,
+      tool, model, provider, gateway, input_tokens, output_tokens,
       cache_read_tokens, cache_write_tokens, thinking_tokens,
       cost, cost_source, session_id, source_file, cwd, device, device_instance_id, platform, origin
     ) VALUES (
       @id, @ts, @ingestedAt, @syncedAt, @updatedAt, @lineOffset,
-      @tool, @model, @provider, @inputTokens, @outputTokens,
+      @tool, @model, @provider, @gateway, @inputTokens, @outputTokens,
       @cacheReadTokens, @cacheWriteTokens, @thinkingTokens,
       @cost, @costSource, @sessionId, @sourceFile, @cwd, @device, @deviceInstanceId, @platform, @origin
     )
@@ -53,6 +53,7 @@ export function insertRecord(db: Database.Database, record: StatsRecord): void {
     tool: record.tool,
     model: record.model,
     provider: record.provider,
+    gateway: record.gateway ?? null,
     inputTokens: record.inputTokens,
     outputTokens: record.outputTokens,
     cacheReadTokens: record.cacheReadTokens,
@@ -187,6 +188,7 @@ function mapRowToRecord(row: Record<string, unknown>): StatsRecord {
     tool: row.tool as StatsRecord['tool'],
     model: row.model as string,
     provider: row.provider as string,
+    gateway: (row.gateway as string) || undefined,
     inputTokens: row.input_tokens as number,
     outputTokens: row.output_tokens as number,
     cacheReadTokens: row.cache_read_tokens as number,

@@ -1,6 +1,6 @@
 import type { Parser, ParseResult, ParseContext, StatsRecord, Tool } from '../types.js'
 import { generateRecordId } from '../record-id.js'
-import { inferProvider } from '../provider.js'
+import { inferProvider, resolveGateway } from '../provider.js'
 import { calculateCost } from '../pricing.js'
 
 /**
@@ -95,6 +95,12 @@ export class CopilotParser implements Parser {
     const statsRecord: StatsRecord = {
       id: recordId, ts, ingestedAt: context.now, updatedAt: context.now,
       lineOffset: context.lineOffset, tool: this.tool, model, provider,
+      gateway: resolveGateway(
+        attrStr(attrs, 'gen_ai.gateway'),
+        attrStr(attrs, 'gen_ai.provider.name'),
+        attrStr(attrs, 'gen_ai.request.base_url'),
+        attrStr(attrs, 'gen_ai.system'),
+      ),
       inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, thinkingTokens,
       cost, costSource: 'pricing',
       sessionId, sourceFile: context.sourceFile,

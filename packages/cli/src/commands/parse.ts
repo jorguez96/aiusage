@@ -2,7 +2,7 @@ import Database from 'better-sqlite3'
 import { readFileSync, statSync, existsSync, openSync, readSync, closeSync } from 'node:fs'
 import { basename, join, dirname } from 'node:path'
 import { hostname } from 'node:os'
-import { Aggregator, resolveExchangeRate, generateToolCallId, inferProvider, calculateCost, resolvePrice, generateRecordId, normalizeCodeFuseModel, parseTimestamp, type StatsRecord, type Tool } from '@aiusage/core'
+import { Aggregator, resolveExchangeRate, generateToolCallId, inferProvider, resolveGateway, calculateCost, resolvePrice, generateRecordId, normalizeCodeFuseModel, parseTimestamp, type StatsRecord, type Tool } from '@aiusage/core'
 import type { ToolCallRecord } from '@aiusage/core'
 import { insertRecord, LOCAL_RECORDS_WHERE } from '../db/records.js'
 import { insertToolCall } from '../db/tool-calls.js'
@@ -182,6 +182,7 @@ function parseUiMessagesFile(options: {
       tool,
       model,
       provider,
+      gateway: resolveGateway(payload.inferenceProvider, payload.gateway, payload.provider, payload.baseUrl, payload.baseURL),
       inputTokens,
       outputTokens,
       cacheReadTokens,
@@ -272,6 +273,7 @@ function parseCodeFuseSnapshotFile(options: {
   if (model === '<synthetic>') return { records, errors }
 
   const provider = inferProvider(model)
+  const gateway = resolveGateway(parsed.gateway, parsed.provider, parsed.provider_id, parsed.last_status_line?.provider)
   const ts = parseTimestamp(
     parsed?.last_status_line_time ?? parsed?.last_status_line?.update_time ?? parsed?.current_request_time,
     now,
@@ -289,6 +291,7 @@ function parseCodeFuseSnapshotFile(options: {
     tool: 'codefuse',
     model,
     provider,
+    gateway,
     inputTokens,
     outputTokens,
     cacheReadTokens,
@@ -374,6 +377,7 @@ function parseKiroSessionFile(options: {
       tool: 'kiro',
       model,
       provider: inferProvider(model),
+      gateway: resolveGateway(turn?.gateway, turn?.provider, parsed?.gateway, parsed?.provider),
       inputTokens,
       outputTokens,
       cacheReadTokens: 0,
@@ -463,6 +467,7 @@ function parseKiroWorkspaceSession(options: {
 
     const model = normalizeKiroModel(log.completionOptions?.model ?? log.modelTitle)
     const provider = typeof log.provider === 'string' && log.provider.trim() ? log.provider.trim().toLowerCase() : inferProvider(model)
+    const gateway = resolveGateway(log.gateway, log.provider, log.providerId, log.baseUrl)
     const recordTs = sessionTs + index
     const tokenArgs = { inputTokens, outputTokens, cacheReadTokens: 0, cacheWriteTokens: 0, thinkingTokens: 0 }
     const cost = calculateCost(model, tokenArgs, exchangeRate)
@@ -477,6 +482,7 @@ function parseKiroWorkspaceSession(options: {
       tool: 'kiro',
       model,
       provider,
+      gateway,
       inputTokens,
       outputTokens,
       cacheReadTokens: 0,
@@ -656,6 +662,7 @@ export async function runParse(db: Database.Database, filterTool?: string, optio
               }
               const model = normalizeKiroModel(data.model)
               const provider = typeof data.provider === 'string' && data.provider.trim() ? data.provider.trim().toLowerCase() : inferProvider(model)
+              const gateway = resolveGateway(data.gateway, data.provider, data.providerId, data.baseUrl, data.baseURL)
               const recordTs = stat.mtimeMs
               const tokenArgs = { inputTokens, outputTokens, cacheReadTokens: 0, cacheWriteTokens: 0, thinkingTokens: 0 }
               const cost = calculateCost(model, tokenArgs, exchangeRate)
@@ -669,6 +676,7 @@ export async function runParse(db: Database.Database, filterTool?: string, optio
                 tool: 'kiro',
                 model,
                 provider,
+                gateway,
                 inputTokens,
                 outputTokens,
                 cacheReadTokens: 0,
@@ -1411,7 +1419,7 @@ function backfillSkillNames(db: Database.Database): void {
 
 function backfillCodexModels(db: Database.Database): void {
   const rows = db.prepare(`
-    SELECT id, source_file, line_offset
+    SELECT id, source_file, line_offset, gateway
     FROM records
     WHERE tool = 'codex' AND model = 'unknown'
       AND ${LOCAL_RECORDS_WHERE}
@@ -1428,7 +1436,7 @@ function backfillCodexModels(db: Database.Database): void {
   }
 
   const updateStmt = db.prepare(
-    `UPDATE records SET model = ?, provider = ?, cost = ?, cost_source = ?, updated_at = ? WHERE id = ?`
+    `UPDATE records SET model = ?, provider = ?, gateway = COALESCE(?, gateway), cost = ?, cost_source = ?, updated_at = ? WHERE id = ?`
   )
 
   for (const [sourceFile, fileRows] of byFile) {
@@ -1437,7 +1445,7 @@ function backfillCodexModels(db: Database.Database): void {
       const lines = content.split('\n')
 
       // Build a map: line_offset → model at that point in the file
-      const offsetToModel = new Map<number, string>()
+      const offsetToModel = new Map<number, { model: string; gateway?: string }>()
       let currentModel = ''
       let byteOffset = 0
 
@@ -1451,7 +1459,10 @@ function backfillCodexModels(db: Database.Database): void {
             // record model at this offset if it's a token_count event
             const payload = parsed.event_msg?.payload ?? (parsed.type === 'event_msg' ? parsed.payload : undefined)
             if (payload?.type === 'token_count' && currentModel) {
-              offsetToModel.set(byteOffset, currentModel)
+              offsetToModel.set(byteOffset, {
+                model: currentModel,
+                gateway: resolveGateway(parsed.gateway, parsed.provider, payload?.gateway, payload?.provider),
+              })
             }
           } catch {}
         }
@@ -1459,10 +1470,10 @@ function backfillCodexModels(db: Database.Database): void {
       }
 
       for (const row of fileRows) {
-        const model = offsetToModel.get(row.line_offset)
-        if (!model) continue
-        const provider = inferProvider(model)
-        updateStmt.run(model, provider, 0, 'unknown', Date.now(), row.id)
+        const details = offsetToModel.get(row.line_offset)
+        if (!details) continue
+        const provider = inferProvider(details.model)
+        updateStmt.run(details.model, provider, details.gateway, 0, 'unknown', Date.now(), row.id)
       }
     } catch {
       // File missing or unreadable — skip

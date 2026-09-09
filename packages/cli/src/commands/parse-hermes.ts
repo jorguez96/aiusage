@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3'
 import type { StatsRecord, ToolCallRecord } from '@aiusage/core'
-import { generateRecordId, generateToolCallId, inferProvider, calculateCost } from '@aiusage/core'
+import { generateRecordId, generateToolCallId, inferProvider, resolveGateway, calculateCost } from '@aiusage/core'
 import type { HermesCursor } from '../watermark.js'
 
 export interface HermesImportOptions {
@@ -132,6 +132,7 @@ export function runParseHermes(
       tool: 'hermes',
       model,
       provider,
+      gateway: resolveGateway(rawProvider !== 'custom' ? rawProvider : undefined),
       inputTokens,
       outputTokens,
       cacheReadTokens,

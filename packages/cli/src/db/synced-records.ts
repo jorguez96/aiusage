@@ -6,12 +6,12 @@ export function insertSyncedRecord(db: Database.Database, record: SyncRecord): b
   // Without this check, a stale remote record could silently overwrite a newer one.
   const result = db.prepare(`
     INSERT INTO synced_records (
-      id, ts, tool, model, provider, input_tokens, output_tokens,
+      id, ts, tool, model, provider, gateway, input_tokens, output_tokens,
       cache_read_tokens, cache_write_tokens, thinking_tokens,
       cost, cost_source, session_key, device, device_instance_id, platform, updated_at,
       source_file, cwd
     ) VALUES (
-      @id, @ts, @tool, @model, @provider, @inputTokens, @outputTokens,
+      @id, @ts, @tool, @model, @provider, @gateway, @inputTokens, @outputTokens,
       @cacheReadTokens, @cacheWriteTokens, @thinkingTokens,
       @cost, @costSource, @sessionKey, @device, @deviceInstanceId, @platform, @updatedAt,
       @sourceFile, @cwd
@@ -21,6 +21,7 @@ export function insertSyncedRecord(db: Database.Database, record: SyncRecord): b
       tool = excluded.tool,
       model = excluded.model,
       provider = excluded.provider,
+      gateway = excluded.gateway,
       input_tokens = excluded.input_tokens,
       output_tokens = excluded.output_tokens,
       cache_read_tokens = excluded.cache_read_tokens,
@@ -42,6 +43,7 @@ export function insertSyncedRecord(db: Database.Database, record: SyncRecord): b
     tool: record.tool,
     model: record.model,
     provider: record.provider,
+    gateway: record.gateway ?? null,
     inputTokens: record.inputTokens,
     outputTokens: record.outputTokens,
     cacheReadTokens: record.cacheReadTokens,
@@ -95,12 +97,12 @@ export function mergeSyncedRecordsIntoRecords(db: Database.Database, currentDevi
   const insertStmt = db.prepare(`
     INSERT OR IGNORE INTO records (
       id, ts, ingested_at, synced_at, updated_at, line_offset,
-      tool, model, provider, input_tokens, output_tokens,
+      tool, model, provider, gateway, input_tokens, output_tokens,
       cache_read_tokens, cache_write_tokens, thinking_tokens,
       cost, cost_source, session_id, source_file, cwd, device, device_instance_id, platform, origin
     ) VALUES (
       @id, @ts, @ingestedAt, @syncedAt, @updatedAt, 0,
-      @tool, @model, @provider, @inputTokens, @outputTokens,
+      @tool, @model, @provider, @gateway, @inputTokens, @outputTokens,
       @cacheReadTokens, @cacheWriteTokens, @thinkingTokens,
       @cost, @costSource, @sessionId, @sourceFile, @cwd, @device, @deviceInstanceId, @platform, 'synced'
     )
@@ -120,6 +122,7 @@ export function mergeSyncedRecordsIntoRecords(db: Database.Database, currentDevi
         tool: row.tool,
         model: row.model,
         provider: row.provider,
+        gateway: row.gateway,
         inputTokens: row.input_tokens,
         outputTokens: row.output_tokens,
         cacheReadTokens: row.cache_read_tokens,
@@ -148,6 +151,7 @@ function mapRowToSyncRecord(row: Record<string, unknown>): SyncRecord {
     tool: row.tool as SyncRecord['tool'],
     model: row.model as string,
     provider: row.provider as string,
+    gateway: (row.gateway as string) || undefined,
     inputTokens: row.input_tokens as number,
     outputTokens: row.output_tokens as number,
     cacheReadTokens: row.cache_read_tokens as number,

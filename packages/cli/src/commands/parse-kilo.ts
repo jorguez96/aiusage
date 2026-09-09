@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3'
 import type { StatsRecord } from '@aiusage/core'
-import { calculateCost, generateRecordId, inferProvider } from '@aiusage/core'
+import { calculateCost, generateRecordId, inferProvider, resolveGateway } from '@aiusage/core'
 import type { OpenCodeCursor } from '../watermark.js'
 
 export interface KiloImportOptions {
@@ -108,7 +108,7 @@ export function runParseKilo(
     const tokenArgs = { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, thinkingTokens }
     const calculatedCost = model !== 'unknown' ? calculateCost(model, tokenArgs, exchangeRate) : 0
     const logCostValid = parsed.cost != null && parsed.cost > 0
-    const cost = logCostValid ? parsed.cost : calculatedCost
+    const cost = logCostValid ? (parsed.cost ?? 0) : calculatedCost
     const costSource: StatsRecord['costSource'] = logCostValid ? 'log' : calculatedCost > 0 ? 'pricing' : 'unknown'
 
     records.push({
@@ -120,6 +120,7 @@ export function runParseKilo(
       tool: 'kilocode',
       model,
       provider,
+      gateway: resolveGateway(parsed.providerID),
       inputTokens,
       outputTokens,
       cacheReadTokens,

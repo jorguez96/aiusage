@@ -47,6 +47,8 @@ export interface StatsRecord {
   tool: Tool
   model: string                        // 如 "claude-sonnet-4-6"，未知时为 "unknown"
   provider: string                     // 如 "anthropic"、"openai"
+  /** The serving gateway/credential when the source log identifies it. */
+  gateway?: string
   inputTokens: number
   outputTokens: number
   cacheReadTokens: number
@@ -77,6 +79,8 @@ export interface SyncRecord {
   tool: Tool
   model: string
   provider: string
+  /** The serving gateway/credential when the source log identifies it. */
+  gateway?: string
   inputTokens: number
   outputTokens: number
   cacheReadTokens: number

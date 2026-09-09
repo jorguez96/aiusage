@@ -18,26 +18,31 @@ function context(
 }
 
 function row(options: {
+  method?: string
   sessionUpdate?: string
   totalTokens?: number
+  usage?: Record<string, unknown>
   timestamp?: number
   modelId?: string
   sessionId?: string
 }): string {
   const {
+    method = 'session/update',
     sessionUpdate = 'agent_message_chunk',
     totalTokens,
+    usage,
     timestamp = 1_700_000_000_000,
     modelId,
     sessionId = 'session-1',
   } = options
   return JSON.stringify({
-    method: 'session/update',
+    method,
     params: {
       sessionId,
       update: {
         sessionUpdate,
         ...(modelId ? { _meta: { modelId } } : {}),
+        ...(usage ? { usage } : {}),
       },
       _meta: {
         ...(totalTokens == null ? {} : { totalTokens }),
@@ -134,5 +139,45 @@ describe('GrokParser', () => {
 
     expect(first.record).toMatchObject({ sessionId: 'session-1', model: 'grok-one', inputTokens: 100, cwd: '/work/app' })
     expect(second.record).toMatchObject({ sessionId: 'session-2', model: 'grok-two', inputTokens: 40, cwd: '/work/other' })
+  })
+
+  it('uses turn usage categories instead of dropping output, cache, and reasoning tokens', () => {
+    const parser = new GrokParser()
+    parser.parseLine(row({ sessionUpdate: 'user_message_chunk', modelId: 'grok-4.5' }), context(undefined, 10))
+    parser.parseLine(row({
+      method: '_x.ai/session/update',
+      sessionUpdate: 'turn_completed',
+      timestamp: 1_700_000_002_000,
+      usage: {
+        inputTokens: 1_000,
+        outputTokens: 200,
+        cachedReadTokens: 300,
+        cacheCreationTokens: 40,
+        reasoningTokens: 50,
+        totalTokens: 1_200,
+      },
+    }), context(undefined, 100))
+
+    const [result] = parser.finalize()
+    expect(result.record).toMatchObject({
+      inputTokens: 1000,
+      outputTokens: 200,
+      cacheReadTokens: 300,
+      cacheWriteTokens: 40,
+      thinkingTokens: 50,
+    })
+  })
+
+  it('counts a cumulative counter again after an explicit compaction reset', () => {
+    const parser = new GrokParser()
+    parser.parseLine(row({ sessionUpdate: 'user_message_chunk', modelId: 'grok-4.5' }), context(undefined, 0))
+    parser.parseLine(row({ totalTokens: 100 }), context(undefined, 100))
+    parser.parseLine(row({ sessionUpdate: 'compaction_checkpoint' }), context(undefined, 200))
+    parser.parseLine(row({ sessionUpdate: 'auto_compact_completed' }), context(undefined, 300))
+    parser.parseLine(row({ totalTokens: 20 }), context(undefined, 400))
+    parser.parseLine(row({ totalTokens: 30 }), context(undefined, 500))
+
+    const [result] = parser.finalize()
+    expect(result.record?.inputTokens).toBe(130)
   })
 })

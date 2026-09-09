@@ -1,7 +1,7 @@
 import type { Parser, ParseResult, ParseContext } from '../types.js'
 import type { StatsRecord, ToolCallRecord } from '../types.js'
 import { generateRecordId, generateToolCallId, generateOrphanToolCallId } from '../record-id.js'
-import { inferProvider } from '../provider.js'
+import { inferProvider, resolveGateway } from '../provider.js'
 import { calculateCost, resolvePrice } from '../pricing.js'
 import { normalizeCodeFuseModel } from '../codefuse-model.js'
 import { parseTimestamp } from '../timestamp.js'
@@ -146,6 +146,7 @@ export class CodeFuseParser implements Parser {
         idSeed: typeof parsed.uuid === 'string' && parsed.uuid ? `codefuse:${parsed.uuid}` : null,
         sessionId: typeof parsed.sessionId === 'string' && parsed.sessionId ? parsed.sessionId : context.sessionId,
         toolCallsSource: parsed,
+        gateway: resolveGateway(parsed.gateway, parsed.provider, parsed.message?.gateway, parsed.message?.provider, parsed.providerData?.provider),
       })
     }
 
@@ -160,6 +161,7 @@ export class CodeFuseParser implements Parser {
         idSeed: typeof parsed.uuid === 'string' && parsed.uuid ? `codefuse:${parsed.uuid}` : null,
         sessionId: typeof parsed.sessionId === 'string' && parsed.sessionId ? parsed.sessionId : context.sessionId,
         toolCallsSource: parsed,
+        gateway: resolveGateway(parsed.gateway, parsed.provider, parsed.providerData?.provider),
       })
     }
 
@@ -195,6 +197,7 @@ export class CodeFuseParser implements Parser {
       idSeed: null,
       sessionId: context.sessionId,
       toolCallsSource: parsed,
+      gateway: resolveGateway(parsed.gateway, parsed.provider, payload?.gateway, payload?.provider),
     })
     if (!result?.record) return result
 
@@ -219,6 +222,7 @@ export class CodeFuseParser implements Parser {
     idSeed: string | null
     sessionId: string
     toolCallsSource: any
+    gateway?: string
   }): ParseResult | null {
     const { context, usage } = options
     if (options.model === '<synthetic>') return null
@@ -242,6 +246,7 @@ export class CodeFuseParser implements Parser {
       tool: this.tool,
       model,
       provider,
+      gateway: options.gateway,
       inputTokens: usage.inputTokens,
       outputTokens: usage.outputTokens,
       cacheReadTokens: usage.cacheReadTokens,

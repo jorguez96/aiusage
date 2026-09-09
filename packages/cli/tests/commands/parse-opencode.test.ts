@@ -91,6 +91,7 @@ describe('parse-opencode', () => {
     expect(result.records[0].tool).toBe('opencode')
     expect(result.records[0].model).toBe('glm-5.1')
     expect(result.records[0].provider).toBe('qianfan')
+    expect(result.records[0].gateway).toBe('qianfan')
     expect(result.records[0].inputTokens).toBe(120)
     expect(result.toolCalls.map(tc => tc.name)).toEqual(['bash', 'read'])
     expect(result.nextCursor).toEqual({

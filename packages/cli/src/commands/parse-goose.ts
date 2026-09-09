@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3'
 import type { StatsRecord } from '@aiusage/core'
-import { calculateCost, generateRecordId, inferProvider } from '@aiusage/core'
+import { calculateCost, generateRecordId, inferProvider, resolveGateway } from '@aiusage/core'
 
 export interface GooseCursor {
   lastCreatedAt: string
@@ -89,6 +89,7 @@ export function runParseGoose(db: Database.Database, options: GooseImportOptions
       tool: 'goose',
       model,
       provider: typeof row.provider_name === 'string' && row.provider_name.trim() ? row.provider_name.trim() : inferProvider(model),
+      gateway: resolveGateway(row.provider_name),
       inputTokens: adjustedInput,
       outputTokens,
       cacheReadTokens: 0,

@@ -50,6 +50,14 @@ describe('Records CRUD', () => {
     expect(retrieved!.model).toBe('claude-sonnet-4-6')
   })
 
+  it('round-trips a serving gateway and leaves legacy rows empty', () => {
+    insertRecord(db, createTestRecord({ id: 'gateway', gateway: 'opencode-go' }))
+    insertRecord(db, createTestRecord({ id: 'legacy' }))
+
+    expect(getRecordById(db, 'gateway')?.gateway).toBe('opencode-go')
+    expect(getRecordById(db, 'legacy')?.gateway).toBeUndefined()
+  })
+
   it('returns null for non-existent record', () => {
     const retrieved = getRecordById(db, 'non-existent')
     expect(retrieved).toBeNull()

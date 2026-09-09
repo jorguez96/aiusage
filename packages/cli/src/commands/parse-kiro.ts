@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3'
 import type { StatsRecord } from '@aiusage/core'
-import { calculateCost, generateRecordId, inferProvider } from '@aiusage/core'
+import { calculateCost, generateRecordId, inferProvider, resolveGateway } from '@aiusage/core'
 import type { TimestampIdCursor } from '../watermark.js'
 
 export interface KiroImportOptions {
@@ -58,6 +58,7 @@ function recordFromParts(options: {
   ts: number
   model: string
   provider: string
+  gateway?: string
   inputTokens: number
   outputTokens: number
   sessionId: string
@@ -67,7 +68,7 @@ function recordFromParts(options: {
   now: number
   exchangeRate?: number
 }): StatsRecord {
-  const { dbPath, sourceId, ts: recordTs, model, provider, inputTokens, outputTokens, sessionId, device, deviceInstanceId, platform, now, exchangeRate } = options
+  const { dbPath, sourceId, ts: recordTs, model, provider, gateway, inputTokens, outputTokens, sessionId, device, deviceInstanceId, platform, now, exchangeRate } = options
   const tokenArgs = { inputTokens, outputTokens, cacheReadTokens: 0, cacheWriteTokens: 0, thinkingTokens: 0 }
   const cost = calculateCost(model, tokenArgs, exchangeRate)
   return {
@@ -79,6 +80,7 @@ function recordFromParts(options: {
     tool: 'kiro',
     model,
     provider: provider || inferProvider(model),
+    gateway,
     inputTokens,
     outputTokens,
     cacheReadTokens: 0,
@@ -117,6 +119,7 @@ function parseTokensGenerated(db: Database.Database, options: KiroImportOptions)
       ts: ts(row.timestamp, now),
       model,
       provider: typeof row.provider === 'string' ? row.provider : inferProvider(model),
+      gateway: resolveGateway(row.provider),
       inputTokens,
       outputTokens,
       sessionId: String(row.id),
@@ -168,6 +171,7 @@ function parseConversationsV2(db: Database.Database, options: KiroImportOptions)
         ts: ts(request.request_start_timestamp_ms, now),
         model,
         provider: inferProvider(model),
+        gateway: resolveGateway(request?.provider),
         inputTokens,
         outputTokens,
         sessionId: String(row.conversation_id ?? 'unknown'),

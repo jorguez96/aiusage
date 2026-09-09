@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3'
 import type { StatsRecord, ToolCallRecord } from '@aiusage/core'
-import { generateRecordId, generateToolCallId, inferProvider, calculateCost } from '@aiusage/core'
+import { generateRecordId, generateToolCallId, inferProvider, resolveGateway, calculateCost } from '@aiusage/core'
 import type { OpenCodeCursor } from '../watermark.js'
 
 export interface OpenCodeImportOptions {
@@ -121,7 +121,7 @@ export function runParseOpenCode(
     const calculatedCost = model !== 'unknown' ? calculateCost(model, tokenArgs, exchangeRate) : 0
     // OpenCode often logs cost:0 even for paid models; fall back to pricing table when that happens
     const logCostValid = parsed.cost != null && parsed.cost > 0
-    const cost = logCostValid ? parsed.cost : calculatedCost
+    const cost = logCostValid ? (parsed.cost ?? 0) : calculatedCost
     const costSource: StatsRecord['costSource'] = logCostValid ? 'log' : calculatedCost > 0 ? 'pricing' : 'unknown'
 
     const record: StatsRecord = {
@@ -133,6 +133,7 @@ export function runParseOpenCode(
       tool: 'opencode',
       model,
       provider,
+      gateway: resolveGateway(parsed.providerID),
       inputTokens,
       outputTokens,
       cacheReadTokens,

@@ -120,11 +120,11 @@
     {/if}
 
     <div class="model-list">
-      {#each sortedModels as model, i (model.model)}
+      {#each sortedModels as model, i (model.model + ':' + (model.gateway || ''))}
         <div class="model-row animate-row" style="animation-delay: {i * 30}ms">
           <div class="model-meta">
             <span class="mono model-name">{model.model}</span>
-            <span class="model-provider">{model.provider}</span>
+            <span class="model-provider">{model.gateway || model.provider}</span>
           </div>
 
           <div class="bar-area">

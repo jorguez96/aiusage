@@ -1,7 +1,7 @@
 import type { Parser, ParseResult, ParseContext } from '../types.js'
 import type { StatsRecord, ToolCallRecord, Tool } from '../types.js'
 import { generateRecordId, generateToolCallId, generateOrphanToolCallId } from '../record-id.js'
-import { inferProvider } from '../provider.js'
+import { inferProvider, resolveGateway } from '../provider.js'
 import { calculateCost } from '../pricing.js'
 
 interface PendingToolCall {
@@ -92,6 +92,7 @@ export class CodexParser implements Parser {
       tool: this.tool,
       model,
       provider,
+      gateway: resolveGateway(parsed.gateway, parsed.provider, payload?.gateway, payload?.provider, parsed.baseUrl, parsed.baseURL),
       inputTokens,
       outputTokens,
       cacheReadTokens,
