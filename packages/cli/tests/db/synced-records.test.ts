@@ -46,6 +46,11 @@ describe('Synced Records', () => {
     expect(retrieved!.id).toBe('sync-1')
   })
 
+  it('round-trips an optional serving gateway', () => {
+    insertSyncedRecord(db, createTestSyncRecord({ gateway: 'opencode-go' }))
+    expect(getSyncedRecordById(db, 'sync-1')?.gateway).toBe('opencode-go')
+  })
+
   it('upserts synced record with newer updatedAt', () => {
     const record = createTestSyncRecord()
     insertSyncedRecord(db, record)

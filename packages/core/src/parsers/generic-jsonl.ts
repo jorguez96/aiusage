@@ -1,6 +1,6 @@
 import type { Parser, ParseContext, ParseResult, StatsRecord, Tool, ToolCallRecord } from '../types.js'
 import { generateRecordId, generateToolCallId } from '../record-id.js'
-import { inferProvider } from '../provider.js'
+import { inferProvider, resolveGateway } from '../provider.js'
 import { calculateCost, resolvePrice } from '../pricing.js'
 
 function num(value: unknown): number {
@@ -132,6 +132,14 @@ function usageFromAny(parsed: any, tool?: Tool): Usage | null {
   }
 }
 
+function loggedCostFromAny(parsed: any): number | null {
+  const usage = parsed?.message?.usage ?? parsed?.usage ?? parsed?.event?.usage ?? parsed?.data?.usage
+  const raw = usage?.cost
+  const value = raw && typeof raw === 'object' ? raw.total : raw
+  const cost = Number(value)
+  return Number.isFinite(cost) && cost > 0 ? cost : null
+}
+
 function shouldAccept(tool: Tool, parsed: any): boolean {
   if (tool === 'kimi') {
     return parsed?.message?.type === 'StatusUpdate'
@@ -207,6 +215,26 @@ export class GenericJsonlParser implements Parser {
     const provider = typeof normalized?.provider === 'string' && normalized.provider.trim()
       ? normalized.provider.trim()
       : inferProvider(model)
+    const gateway = resolveGateway(
+      normalized?.gateway,
+      normalized?.gatewayId,
+      normalized?.providerID,
+      normalized?.providerId,
+      normalized?.provider,
+      normalized?.baseUrl,
+      normalized?.baseURL,
+      normalized?.endpoint,
+      normalized?.apiBase,
+      normalized?.message?.gateway,
+      normalized?.message?.gatewayId,
+      normalized?.message?.provider,
+      normalized?.message?.providerID,
+      normalized?.message?.providerId,
+      normalized?.providerData?.gateway,
+      normalized?.providerData?.provider,
+      normalized?.data?.gateway,
+      normalized?.data?.provider,
+    )
     const recordTs = ts(
       normalized?.timestamp
       ?? normalized?.ts
@@ -216,8 +244,10 @@ export class GenericJsonlParser implements Parser {
       context.now,
     )
     const recordId = generateRecordId(context.deviceInstanceId, context.sourceFile, context.lineOffset)
+    const loggedCost = loggedCostFromAny(normalized)
     const hasPrice = resolvePrice(model) != null
-    const cost = hasPrice ? calculateCost(model, usage, context.exchangeRate) : 0
+    const calculatedCost = hasPrice ? calculateCost(model, usage, context.exchangeRate) : 0
+    const cost = loggedCost ?? calculatedCost
 
     const record: StatsRecord = {
       id: recordId,
@@ -228,13 +258,14 @@ export class GenericJsonlParser implements Parser {
       tool: this.tool,
       model,
       provider,
+      gateway,
       inputTokens: usage.inputTokens,
       outputTokens: usage.outputTokens,
       cacheReadTokens: usage.cacheReadTokens,
       cacheWriteTokens: usage.cacheWriteTokens,
       thinkingTokens: usage.thinkingTokens,
       cost,
-      costSource: hasPrice ? 'pricing' : 'unknown',
+      costSource: loggedCost != null ? 'log' : hasPrice ? 'pricing' : 'unknown',
       sessionId: context.sessionId,
       sourceFile: context.sourceFile,
       device: context.device,

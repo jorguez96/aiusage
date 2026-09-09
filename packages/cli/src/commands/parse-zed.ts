@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3'
 import type { StatsRecord } from '@aiusage/core'
-import { calculateCost, generateRecordId, inferProvider } from '@aiusage/core'
+import { calculateCost, generateRecordId, inferProvider, resolveGateway } from '@aiusage/core'
 import type { TimestampIdCursor } from '../watermark.js'
 
 export interface ZedImportOptions {
@@ -119,6 +119,7 @@ export function runParseZed(db: Database.Database, options: ZedImportOptions): Z
       tool: 'zed',
       model,
       provider,
+      gateway: resolveGateway(thread?.model?.provider),
       inputTokens: usage.inputTokens,
       outputTokens: usage.outputTokens,
       cacheReadTokens: usage.cacheReadTokens,

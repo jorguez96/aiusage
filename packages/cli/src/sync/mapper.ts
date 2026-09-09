@@ -37,6 +37,7 @@ export function mapStatsRecordToSyncRecord(record: StatsRecord): SyncRecord {
     tool: record.tool,
     model: record.model,
     provider: record.provider,
+    gateway: record.gateway,
     inputTokens: record.inputTokens,
     outputTokens: record.outputTokens,
     cacheReadTokens: record.cacheReadTokens,

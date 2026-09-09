@@ -1,7 +1,7 @@
 import type { Parser, ParseResult, ParseContext } from '../types.js'
 import type { StatsRecord, Tool, ToolCallRecord } from '../types.js'
 import { generateRecordId, generateToolCallId, generateOrphanToolCallId } from '../record-id.js'
-import { inferProvider } from '../provider.js'
+import { inferProvider, resolveGateway } from '../provider.js'
 import { calculateCost, resolvePrice } from '../pricing.js'
 import { normalizeQoderModel } from '../qoder-model.js'
 
@@ -91,6 +91,7 @@ export class QoderParser implements Parser {
       tool: this.tool,
       model,
       provider: inferProvider(model),
+      gateway: resolveGateway(data.gateway, data.provider, data.provider_id, parsed.gateway, parsed.provider),
       inputTokens,
       outputTokens,
       cacheReadTokens,

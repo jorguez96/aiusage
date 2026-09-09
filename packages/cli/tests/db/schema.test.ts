@@ -36,6 +36,7 @@ describe('Database Schema', () => {
     expect(columnNames).toContain('tool')
     expect(columnNames).toContain('model')
     expect(columnNames).toContain('provider')
+    expect(columnNames).toContain('gateway')
     expect(columnNames).toContain('input_tokens')
     expect(columnNames).toContain('output_tokens')
     expect(columnNames).toContain('cache_read_tokens')
@@ -93,6 +94,7 @@ describe('Database Schema', () => {
     expect(indexNames).toContain('idx_records_ts')
     expect(indexNames).toContain('idx_records_tool')
     expect(indexNames).toContain('idx_records_model')
+    expect(indexNames).toContain('idx_records_gateway')
     expect(indexNames).toContain('idx_records_session')
     expect(indexNames).toContain('idx_records_source')
   })
@@ -117,7 +119,7 @@ describe('Database Schema', () => {
   it('records latest schema version', () => {
     initializeDatabase(db)
     const version = db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get()
-    expect((version as any).version).toBe(13)
+    expect((version as any).version).toBe(14)
   })
 
   it('queries visualization views successfully', () => {

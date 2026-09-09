@@ -33,3 +33,15 @@ export function inferProvider(model: string): string {
   }
   return 'unknown'
 }
+
+/**
+ * Prefer endpoint/credential metadata from the source log. The model-derived
+ * provider remains the compatibility fallback for sources that do not expose
+ * a serving gateway.
+ */
+export function resolveGateway(...candidates: unknown[]): string | undefined {
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim()
+  }
+  return undefined
+}

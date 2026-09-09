@@ -8,11 +8,22 @@ const UNKNOWN_MODEL = 'grok-unknown'
 interface ActiveTurn {
   baselineTotal: number
   maxTotal: number
+  cumulativeTokens: number
   lineOffset: number
   timestamp: number
   model: string
   sessionId: string
   context: ParseContext
+  usage: Usage | null
+  loggedCost: number | null
+}
+
+interface Usage {
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  thinkingTokens: number
 }
 
 function nonNegativeInteger(value: unknown): number | null {
@@ -60,6 +71,7 @@ export class GrokParser implements Parser {
   private lastTotal: number | null = null
   private activeTurn: ActiveTurn | null = null
   private fallback: ActiveTurn | null = null
+  private compactionResetPending = false
 
   parseLine(line: string, context: ParseContext): ParseResult | null {
     let parsed: any
@@ -69,13 +81,18 @@ export class GrokParser implements Parser {
       return null
     }
 
-    if (parsed?.method !== 'session/update' || !parsed?.params) return null
+    if (typeof parsed?.method !== 'string' || !parsed.method.endsWith('session/update') || !parsed?.params) return null
 
     const params = parsed.params
     const update = params.update
     const model = stringValue(update?._meta?.modelId)
       ?? stringValue(params?._meta?.modelId)
     if (model) this.currentModel = model
+
+    const sessionUpdate = update?.sessionUpdate
+    if (sessionUpdate === 'compaction_checkpoint' || sessionUpdate === 'auto_compact_completed') {
+      this.compactionResetPending = true
+    }
 
     const recordTimestamp = timestamp(
       params?._meta?.agentTimestampMs
@@ -96,12 +113,27 @@ export class GrokParser implements Parser {
       this.activeTurn = {
         baselineTotal: this.lastTotal ?? 0,
         maxTotal: this.lastTotal ?? 0,
+        cumulativeTokens: 0,
         lineOffset: context.lineOffset,
         timestamp: recordTimestamp,
         model: this.currentModel,
         sessionId,
         context,
+        usage: null,
+        loggedCost: null,
       }
+    }
+
+    const usage = usageFromUpdate(update?.usage)
+    if (usage) {
+      const target = this.activeTurn ?? this.ensureFallback(context, recordTimestamp, sessionId)
+      target.usage = usage
+      target.loggedCost = loggedCostFromUsage(update?.usage)
+      target.timestamp = recordTimestamp
+      target.context = context
+      target.sessionId = sessionId
+      if (target.model === UNKNOWN_MODEL) target.model = this.currentModel
+      return completed
     }
 
     const total = nonNegativeInteger(
@@ -111,11 +143,29 @@ export class GrokParser implements Parser {
         ?? params?.totalTokens,
     )
     if (total == null) return completed
-    if (this.lastTotal != null && total < this.lastTotal) return completed
+    if (this.lastTotal != null && total < this.lastTotal) {
+      if (!this.compactionResetPending) return completed
+      // Grok's cumulative counter starts a new segment after compaction. Count
+      // the new segment from zero, but keep ordinary stale/decreasing snapshots
+      // ignored as before.
+      const target = this.activeTurn ?? this.ensureFallback(context, recordTimestamp, sessionId)
+      target.cumulativeTokens += total
+      target.maxTotal = total
+      target.timestamp = recordTimestamp
+      target.context = context
+      target.sessionId = sessionId
+      if (target.model === UNKNOWN_MODEL && this.currentModel !== UNKNOWN_MODEL) {
+        target.model = this.currentModel
+      }
+      this.compactionResetPending = false
+      this.lastTotal = total
+      return completed
+    }
 
     if (this.activeTurn) {
       if (total > this.activeTurn.maxTotal) {
         this.activeTurn.maxTotal = total
+        this.activeTurn.cumulativeTokens += this.lastTotal == null ? total : total - this.lastTotal
         this.activeTurn.timestamp = recordTimestamp
         this.activeTurn.context = context
         this.activeTurn.sessionId = sessionId
@@ -125,17 +175,12 @@ export class GrokParser implements Parser {
       }
     } else {
       if (!this.fallback) {
-        this.fallback = {
-          baselineTotal: 0,
-          maxTotal: total,
-          lineOffset: context.lineOffset,
-          timestamp: recordTimestamp,
-          model: this.currentModel,
-          sessionId,
-          context,
-        }
+        this.fallback = this.ensureFallback(context, recordTimestamp, sessionId)
+        this.fallback.maxTotal = total
+        this.fallback.cumulativeTokens = total
       } else if (total > this.fallback.maxTotal) {
         this.fallback.maxTotal = total
+        this.fallback.cumulativeTokens += this.lastTotal == null ? total : total - this.lastTotal
         this.fallback.timestamp = recordTimestamp
         this.fallback.context = context
         this.fallback.sessionId = sessionId
@@ -145,7 +190,8 @@ export class GrokParser implements Parser {
       }
     }
 
-    if (this.lastTotal == null || total > this.lastTotal) this.lastTotal = total
+    this.lastTotal = total
+    this.compactionResetPending = false
     return completed
   }
 
@@ -157,17 +203,19 @@ export class GrokParser implements Parser {
   }
 
   private buildResult(turn: ActiveTurn): ParseResult | null {
-    const inputTokens = turn.maxTotal - turn.baselineTotal
-    if (inputTokens <= 0) return null
-
-    const usage = {
-      inputTokens,
+    const usage = turn.usage ?? {
+      inputTokens: turn.cumulativeTokens || Math.max(0, turn.maxTotal - turn.baselineTotal),
       outputTokens: 0,
       cacheReadTokens: 0,
       cacheWriteTokens: 0,
       thinkingTokens: 0,
     }
+    const total = usage.inputTokens + usage.outputTokens + usage.cacheReadTokens + usage.cacheWriteTokens + usage.thinkingTokens
+    if (total <= 0) return null
+
+    const loggedCost = turn.loggedCost
     const hasPrice = resolvePrice(turn.model) != null
+    const calculatedCost = hasPrice ? calculateCost(turn.model, usage, turn.context.exchangeRate) : 0
     const record: StatsRecord = {
       id: generateRecordId(turn.context.deviceInstanceId, turn.context.sourceFile, turn.lineOffset),
       ts: turn.timestamp,
@@ -178,8 +226,8 @@ export class GrokParser implements Parser {
       model: turn.model,
       provider: inferProvider(turn.model),
       ...usage,
-      cost: hasPrice ? calculateCost(turn.model, usage, turn.context.exchangeRate) : 0,
-      costSource: hasPrice ? 'pricing' : 'unknown',
+      cost: loggedCost ?? calculatedCost,
+      costSource: loggedCost != null ? 'log' : hasPrice ? 'pricing' : 'unknown',
       sessionId: turn.sessionId,
       sourceFile: turn.context.sourceFile,
       cwd: cwdFromPath(turn.context.sourceFile),
@@ -195,5 +243,50 @@ export class GrokParser implements Parser {
     this.lastTotal = null
     this.activeTurn = null
     this.fallback = null
+    this.compactionResetPending = false
   }
+
+  private ensureFallback(context: ParseContext, recordTimestamp: number, sessionId: string): ActiveTurn {
+    if (this.fallback) return this.fallback
+    this.fallback = {
+      baselineTotal: 0,
+      maxTotal: 0,
+      cumulativeTokens: 0,
+      lineOffset: context.lineOffset,
+      timestamp: recordTimestamp,
+      model: this.currentModel,
+      sessionId,
+      context,
+      usage: null,
+      loggedCost: null,
+    }
+    return this.fallback
+  }
+}
+
+/** Grok logs USD as integer ticks; divide by 1e10. Non-positive ticks fall back to model pricing. */
+function loggedCostFromUsage(value: unknown): number | null {
+  if (!value || typeof value !== 'object') return null
+  const ticks = Number((value as Record<string, unknown>).costUsdTicks)
+  if (!Number.isFinite(ticks) || ticks <= 0) return null
+  const usd = ticks / 1e10
+  return usd > 0 ? usd : null
+}
+
+/** Grok inputTokens already includes cachedReadTokens; subtract so stored buckets stay disjoint. */
+function usageFromUpdate(value: unknown): Usage | null {
+  if (!value || typeof value !== 'object') return null
+  const usage = value as Record<string, unknown>
+  const number = (key: string): number => nonNegativeInteger(usage[key]) ?? 0
+  const cacheReadTokens = number('cachedReadTokens')
+  const parsed: Usage = {
+    inputTokens: Math.max(0, number('inputTokens') - cacheReadTokens),
+    outputTokens: number('outputTokens'),
+    cacheReadTokens,
+    cacheWriteTokens: number('cacheCreationTokens'),
+    thinkingTokens: number('reasoningTokens'),
+  }
+  return parsed.inputTokens + parsed.outputTokens + parsed.cacheReadTokens + parsed.cacheWriteTokens + parsed.thinkingTokens > 0
+    ? parsed
+    : null
 }

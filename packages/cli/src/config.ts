@@ -9,7 +9,7 @@ export const CONFIG_PATH = join(AIUSAGE_DIR, 'config.json')
 
 export const SYNC_FIELDS = [
   'ts', 'inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens',
-  'thinkingTokens', 'cost', 'costSource', 'tool', 'model', 'provider',
+  'thinkingTokens', 'cost', 'costSource', 'tool', 'model', 'provider', 'gateway',
   'sessionKey', 'device', 'deviceInstanceId', 'updatedAt',
 ]
 

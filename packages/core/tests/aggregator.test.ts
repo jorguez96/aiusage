@@ -73,6 +73,38 @@ describe('Aggregator', () => {
     expect(result.record?.inputTokens).toBe(42)
   })
 
+  it('records a nested serving gateway and falls back when it is absent', () => {
+    const piContext = aggregator.createContext({
+      tool: 'pi',
+      sourceFile: '/tmp/pi/session.jsonl',
+      lineOffset: 0,
+      sessionId: 'pi-session',
+      device: 'dev',
+      deviceInstanceId: 'dev-123',
+    })
+    const piResult = aggregator.parseLine(JSON.stringify({
+      type: 'message',
+      message: {
+        role: 'assistant',
+        provider: 'opencode-go',
+        model: 'glm-5.3-flash',
+        usage: { input: 100, output: 20 },
+      },
+    }), piContext)
+    expect(piResult?.record).toMatchObject({ provider: 'zhipu', gateway: 'opencode-go' })
+
+    const fallback = aggregator.parseLine(JSON.stringify({
+      type: 'message',
+      message: {
+        role: 'assistant',
+        model: 'glm-5.3-flash',
+        usage: { input: 100, output: 20 },
+      },
+    }), { ...piContext, lineOffset: 1, sessionId: 'fallback' })
+    expect(fallback?.record).toMatchObject({ provider: 'zhipu' })
+    expect(fallback?.record?.gateway).toBeUndefined()
+  })
+
   it('finalizes Codex parser and returns orphan tool calls', () => {
     // Simulate Codex function_call without subsequent token_count
     const functionCallLine = '{"event_msg":{"type":"event","payload":{"type":"function_call","function":{"name":"Read"}},"timestamp":1234567890}}'
