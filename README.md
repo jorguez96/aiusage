@@ -128,7 +128,7 @@ AIUsage is designed to be local-first.
 - Local dashboard mode does not require an account and does not send telemetry.
 - Optional sync is user-configured and can use GitHub, S3, R2, or MinIO.
 - Optional leaderboard uploads contain aggregate token totals for ranking periods. They do not include prompts, completions, source code, file paths, or local cost estimates.
-- Cost is an estimate based on pricing metadata and can change when pricing is refreshed or recalculated.
+- Cost prefers a positive source-logged value when present; otherwise it is estimated from pricing metadata and can change when pricing is refreshed or recalculated.
 - Historical totals depend on whether each AI tool still retains its source logs or local databases.
 
 Security issues should be reported privately when possible. See [SECURITY.md](./SECURITY.md).

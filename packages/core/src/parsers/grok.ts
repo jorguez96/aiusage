@@ -264,6 +264,7 @@ export class GrokParser implements Parser {
   }
 }
 
+/** Grok logs USD as integer ticks; divide by 1e10. Non-positive ticks fall back to model pricing. */
 function loggedCostFromUsage(value: unknown): number | null {
   if (!value || typeof value !== 'object') return null
   const ticks = Number((value as Record<string, unknown>).costUsdTicks)
@@ -272,6 +273,7 @@ function loggedCostFromUsage(value: unknown): number | null {
   return usd > 0 ? usd : null
 }
 
+/** Grok inputTokens already includes cachedReadTokens; subtract so stored buckets stay disjoint. */
 function usageFromUpdate(value: unknown): Usage | null {
   if (!value || typeof value !== 'object') return null
   const usage = value as Record<string, unknown>

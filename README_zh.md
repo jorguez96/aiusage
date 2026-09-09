@@ -83,6 +83,8 @@ Docker 示例中的 `~/.aiusage` 挂载只会持久化 AIUsage 自己的数据�
 
 完整 CLI 参考请看：[aiusage.jtanx.com/docs#cli-reference](https://aiusage.jtanx.com/docs#cli-reference)。
 
+服务网关归因（可空 `gateway`、费用回退）见英文 [README.md](./README.md#serving-gateway-attribution)。
+
 ## 已支持的工具
 
 | | | | | |
@@ -115,7 +117,7 @@ AIUsage 采用本地优先设计。
 - 本地仪表盘无需账号，不发送遥测。
 - 可选同步由用户主动配置，支持 GitHub、S3、R2 或 MinIO。
 - 可选排行榜上传只包含各排名周期的聚合 token 总量，不包含 prompt、completion、源码、文件路径或本地费用估算。
-- 费用是基于定价元数据的估算值，刷新或重新计算定价后可能变化。
+- 费用优先使用源日志中的正数；否则基于定价元数据估算，刷新或重新计算定价后可能变化。
 - 历史总量取决于各 AI 工具是否仍保留原始日志或本地数据库。
 
 如需报告安全问题，优先使用私密渠道。详见 [SECURITY.md](./SECURITY.md)。

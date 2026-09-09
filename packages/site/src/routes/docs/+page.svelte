@@ -565,7 +565,7 @@
       <h3>{zh ? '统计卡片' : 'Stat Cards'}</h3>
       <ul>
         <li><strong>{zh ? '总 Token' : 'Total Tokens'}</strong> — {zh ? '所有类型 Token 的合计' : 'Sum of all token types'}</li>
-        <li><strong>{zh ? '总费用' : 'Total Cost'}</strong> — {zh ? '基于定价表计算的估算费用' : 'Estimated cost based on the pricing table'}</li>
+        <li><strong>{zh ? '总费用' : 'Total Cost'}</strong> — {zh ? '优先使用源日志中的正数费用；否则按定价表估算' : 'Positive source-logged cost when available; otherwise estimated from the pricing table'}</li>
         <li><strong>{zh ? '活跃天数' : 'Active Days'}</strong> — {zh ? '有记录的天数' : 'Number of days with recorded usage'}</li>
         <li><strong>{zh ? '会话数' : 'Sessions'}</strong> — {zh ? '独立会话的总数' : 'Total number of distinct sessions'}</li>
       </ul>
@@ -642,8 +642,8 @@
       }</p>
       <Callout type="warn">
         {zh
-          ? '费用为估算值，基于「定价」页面中的每百万 Token 价格计算。若你修改了定价，请手动执行重新计算费用。'
-          : 'Costs are estimates based on the per-million-token pricing table. If you change pricing, run the cost recalculation step manually.'
+          ? '源日志若报告正数费用则直接使用；否则按「定价」页的每百万 Token 价格估算，不会猜网关专属价目。若你修改了定价，请手动重新计算费用。'
+          : 'Positive source-logged costs are used as-is. Otherwise costs are estimated from the per-million-token pricing table; gateway-specific rate cards are not guessed. If you change pricing, run the cost recalculation step manually.'
         }
       </Callout>
     </section>
@@ -674,10 +674,10 @@
         <span class="sec-idx">06</span>
         <h2>{zh ? '模型' : 'Models'}</h2>
       </div>
-      <p>{zh ? '模型页面按总 Token 使用量排序，展示模型 ID、提供商、调用次数、总 Token，以及占比进度条。' : 'The Models page ranks models by total token usage and shows model ID, provider, call count, total tokens, and share bars.'}</p>
+      <p>{zh ? '模型页面按总 Token 使用量排序，并按模型、提供商与服务网关分组；展示模型 ID、网关或提供商、调用次数、总 Token，以及占比进度条。' : 'The Models page ranks usage by total tokens and groups the same model separately by serving gateway. It shows model ID, gateway or provider, call count, total tokens, and share bars.'}</p>
       <ul>
         <li><strong>{zh ? '模型' : 'Model'}</strong> — {zh ? '模型 ID（如 claude-sonnet-4-6）' : 'Model ID (e.g. claude-sonnet-4-6)'}</li>
-        <li><strong>{zh ? '提供商' : 'Provider'}</strong> — {zh ? '服务提供商（Anthropic、OpenAI 等）' : 'Service provider (Anthropic, OpenAI, etc.)'}</li>
+        <li><strong>{zh ? '提供商 / 网关' : 'Provider / Gateway'}</strong> — {zh ? '源日志标明的服务网关或凭证；否则回退为模型推断的提供商' : 'Serving gateway or credential when the source log identifies it; otherwise the model-derived provider'}</li>
         <li><strong>{zh ? '调用次数' : 'Calls'}</strong> — {zh ? '该模型被调用的次数' : 'Number of times invoked'}</li>
         <li><strong>{zh ? 'Token' : 'Tokens'}</strong> — {zh ? '该模型消耗的 Token 总量' : 'Total tokens consumed'}</li>
         <li><strong>{zh ? '占比' : 'Share'}</strong> — {zh ? '在当前筛选结果中的占比（含进度条）' : 'Percentage within the current filtered dataset (with progress bar)'}</li>
