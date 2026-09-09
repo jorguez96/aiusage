@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { GrokParser } from '../src/parsers/grok.js'
+import { calculateCost, removePriceOverride, setPriceOverride } from '../src/pricing.js'
 import type { ParseContext, ParseResult } from '../src/types.js'
 
 function context(
@@ -57,6 +58,10 @@ function records(results: Array<ParseResult | null>): ParseResult[] {
 }
 
 describe('GrokParser', () => {
+  afterEach(() => {
+    removePriceOverride('grok-4.5')
+  })
+
   it('emits positive cumulative token deltas per turn with stable metadata', () => {
     const parser = new GrokParser()
     const emitted = records([
@@ -160,11 +165,97 @@ describe('GrokParser', () => {
 
     const [result] = parser.finalize()
     expect(result.record).toMatchObject({
-      inputTokens: 1000,
+      inputTokens: 700,
       outputTokens: 200,
       cacheReadTokens: 300,
       cacheWriteTokens: 40,
       thinkingTokens: 50,
+    })
+  })
+
+  it('subtracts cache-inside-input and keeps reasoning omitted from totalTokens', () => {
+    const parser = new GrokParser()
+    parser.parseLine(row({ sessionUpdate: 'user_message_chunk', modelId: 'grok-4.5' }), context(undefined, 10))
+    parser.parseLine(row({
+      method: '_x.ai/session/update',
+      sessionUpdate: 'turn_completed',
+      timestamp: 1_700_000_002_000,
+      usage: {
+        inputTokens: 769_781,
+        outputTokens: 5_265,
+        cachedReadTokens: 689_408,
+        cacheCreationTokens: 0,
+        reasoningTokens: 4_348,
+        totalTokens: 775_046,
+        costUsdTicks: 962_968_000,
+      },
+    }), context(undefined, 100))
+
+    const [result] = parser.finalize()
+    const record = result.record!
+    const disjointTotal =
+      record.inputTokens
+      + record.outputTokens
+      + record.cacheReadTokens
+      + record.cacheWriteTokens
+      + record.thinkingTokens
+    expect(record).toMatchObject({
+      inputTokens: 80_373,
+      outputTokens: 5_265,
+      cacheReadTokens: 689_408,
+      cacheWriteTokens: 0,
+      thinkingTokens: 4_348,
+      cost: 0.0962968,
+      costSource: 'log',
+    })
+    expect(record.inputTokens + record.cacheReadTokens).toBe(769_781)
+    expect(record.inputTokens + record.outputTokens + record.cacheReadTokens).toBe(775_046)
+    expect(disjointTotal).toBe(775_046 + 4_348)
+  })
+
+  it('falls back to model pricing when costUsdTicks is absent or non-positive', () => {
+    setPriceOverride('grok-4.5', { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 0.5 })
+    const usage = {
+      inputTokens: 1_000,
+      outputTokens: 200,
+      cachedReadTokens: 300,
+      cacheCreationTokens: 40,
+      reasoningTokens: 50,
+      totalTokens: 1_200,
+    }
+    const tokens = {
+      inputTokens: 700,
+      outputTokens: 200,
+      cacheReadTokens: 300,
+      cacheWriteTokens: 40,
+      thinkingTokens: 50,
+    }
+    const expectedCost = calculateCost('grok-4.5', tokens)
+
+    const missing = new GrokParser()
+    missing.parseLine(row({ sessionUpdate: 'user_message_chunk', modelId: 'grok-4.5' }), context(undefined, 10))
+    missing.parseLine(row({
+      sessionUpdate: 'turn_completed',
+      usage,
+    }), context(undefined, 100))
+    const [missingResult] = missing.finalize()
+    expect(missingResult.record).toMatchObject({
+      ...tokens,
+      cost: expectedCost,
+      costSource: 'pricing',
+    })
+
+    const zero = new GrokParser()
+    zero.parseLine(row({ sessionUpdate: 'user_message_chunk', modelId: 'grok-4.5' }), context(undefined, 10))
+    zero.parseLine(row({
+      sessionUpdate: 'turn_completed',
+      usage: { ...usage, costUsdTicks: 0 },
+    }), context(undefined, 100))
+    const [zeroResult] = zero.finalize()
+    expect(zeroResult.record).toMatchObject({
+      ...tokens,
+      cost: expectedCost,
+      costSource: 'pricing',
     })
   })
 

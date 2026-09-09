@@ -15,6 +15,7 @@ interface ActiveTurn {
   sessionId: string
   context: ParseContext
   usage: Usage | null
+  loggedCost: number | null
 }
 
 interface Usage {
@@ -119,6 +120,7 @@ export class GrokParser implements Parser {
         sessionId,
         context,
         usage: null,
+        loggedCost: null,
       }
     }
 
@@ -126,6 +128,7 @@ export class GrokParser implements Parser {
     if (usage) {
       const target = this.activeTurn ?? this.ensureFallback(context, recordTimestamp, sessionId)
       target.usage = usage
+      target.loggedCost = loggedCostFromUsage(update?.usage)
       target.timestamp = recordTimestamp
       target.context = context
       target.sessionId = sessionId
@@ -210,7 +213,9 @@ export class GrokParser implements Parser {
     const total = usage.inputTokens + usage.outputTokens + usage.cacheReadTokens + usage.cacheWriteTokens + usage.thinkingTokens
     if (total <= 0) return null
 
+    const loggedCost = turn.loggedCost
     const hasPrice = resolvePrice(turn.model) != null
+    const calculatedCost = hasPrice ? calculateCost(turn.model, usage, turn.context.exchangeRate) : 0
     const record: StatsRecord = {
       id: generateRecordId(turn.context.deviceInstanceId, turn.context.sourceFile, turn.lineOffset),
       ts: turn.timestamp,
@@ -221,8 +226,8 @@ export class GrokParser implements Parser {
       model: turn.model,
       provider: inferProvider(turn.model),
       ...usage,
-      cost: hasPrice ? calculateCost(turn.model, usage, turn.context.exchangeRate) : 0,
-      costSource: hasPrice ? 'pricing' : 'unknown',
+      cost: loggedCost ?? calculatedCost,
+      costSource: loggedCost != null ? 'log' : hasPrice ? 'pricing' : 'unknown',
       sessionId: turn.sessionId,
       sourceFile: turn.context.sourceFile,
       cwd: cwdFromPath(turn.context.sourceFile),
@@ -253,19 +258,29 @@ export class GrokParser implements Parser {
       sessionId,
       context,
       usage: null,
+      loggedCost: null,
     }
     return this.fallback
   }
+}
+
+function loggedCostFromUsage(value: unknown): number | null {
+  if (!value || typeof value !== 'object') return null
+  const ticks = Number((value as Record<string, unknown>).costUsdTicks)
+  if (!Number.isFinite(ticks) || ticks <= 0) return null
+  const usd = ticks / 1e10
+  return usd > 0 ? usd : null
 }
 
 function usageFromUpdate(value: unknown): Usage | null {
   if (!value || typeof value !== 'object') return null
   const usage = value as Record<string, unknown>
   const number = (key: string): number => nonNegativeInteger(usage[key]) ?? 0
+  const cacheReadTokens = number('cachedReadTokens')
   const parsed: Usage = {
-    inputTokens: number('inputTokens'),
+    inputTokens: Math.max(0, number('inputTokens') - cacheReadTokens),
     outputTokens: number('outputTokens'),
-    cacheReadTokens: number('cachedReadTokens'),
+    cacheReadTokens,
     cacheWriteTokens: number('cacheCreationTokens'),
     thinkingTokens: number('reasoningTokens'),
   }
