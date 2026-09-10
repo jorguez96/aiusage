@@ -1,11 +1,12 @@
 import type Database from 'better-sqlite3'
 import { unlinkSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { AIUSAGE_DIR, loadConfig } from '../config.js'
+import { AIUSAGE_DIR, loadConfig, loadCredential } from '../config.js'
+import type { SyncConfig } from '../config.js'
 import { cloudClear } from '../sync/cloud.js'
 import { GitSyncBackend } from '../sync/git.js'
 import { S3SyncBackend } from '../sync/s3.js'
-import { loadCredential } from '../config.js'
+import type { SyncBackend } from '../sync/index.js'
 
 export interface CleanResult {
   deletedCount: number
@@ -22,13 +23,34 @@ export interface CleanAllResult {
   watermarkRemoved: boolean
 }
 
-export interface RemoteBackend {
-  type: 'cloud' | 'github' | 's3'
-  label: string
-}
+export type RemoteBackend =
+  | { type: 'cloud'; label: string }
+  | { type: 'github'; label: string }
+  | { type: 's3'; label: string }
 
 export interface CleanPropagationResult {
   backends: Array<{ backend: RemoteBackend; status: 'ok' | 'skipped'; detail?: string }>
+}
+
+function makeRemoteBackend(type: SyncConfig['backend'], label: string): RemoteBackend {
+  switch (type) {
+    case 'cloud':
+      return { type: 'cloud', label }
+    case 'github':
+      return { type: 'github', label }
+    case 's3':
+      return { type: 's3', label }
+  }
+
+  return assertNever(type)
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unsupported sync backend: ${String(value)}`)
+}
+
+type CleanBackend = SyncBackend & {
+  deleteAllData(): Promise<number>
 }
 
 export function cleanOldData(db: Database.Database, days: number): CleanResult {
@@ -91,7 +113,7 @@ export function getRemoteBackends(): RemoteBackend[] {
   return backends
 }
 
-function createBackend(config: ReturnType<typeof loadConfig>) {
+function createBackend(config: ReturnType<typeof loadConfig>): CleanBackend | null {
   if (!config?.sync) return null
 
   if (config.sync.backend === 'github') {
@@ -130,11 +152,13 @@ export async function propagateClean(options: {
 }): Promise<CleanPropagationResult> {
   const config = loadConfig()
   if (!config?.sync) return { backends: [] }
+  const sync = config.sync
+  const backendType = sync.backend
 
   const results: CleanPropagationResult['backends'] = []
 
-  if (config.sync.backend === 'cloud') {
-    if (!options.target || options.target === 'cloud') {
+  if (backendType === 'cloud') {
+    if (!options.target || options.target === backendType) {
       try {
         const result = await cloudClear()
         results.push({
@@ -154,14 +178,14 @@ export async function propagateClean(options: {
   }
 
   // GitHub or S3
-  if (options.target && options.target !== config.sync.backend) {
+  if (options.target && options.target !== backendType) {
     return { backends: results }
   }
 
   const backend = createBackend(config)
   if (!backend) {
     return { backends: [{
-      backend: { type: config.sync.backend as 'github' | 's3', label: config.sync.backend },
+      backend: makeRemoteBackend(backendType, backendType),
       status: 'skipped',
       detail: 'Could not create backend (missing credentials)',
     }] }
@@ -178,10 +202,7 @@ export async function propagateClean(options: {
       }
       await backend.flush?.()
       results.push({
-        backend: {
-          type: config.sync.backend as 'github' | 's3',
-          label: config.sync.backend === 'github' ? `GitHub (${config.sync.repo})` : `S3 (${config.sync.bucket})`,
-        },
+        backend: makeRemoteBackend(backendType, backendType === 'github' ? `GitHub (${sync.repo})` : `S3 (${sync.bucket})`),
         status: 'ok',
         detail: `cleared ${fileCount} files`,
       })
@@ -222,20 +243,14 @@ export async function propagateClean(options: {
 
       await backend.flush?.()
       results.push({
-        backend: {
-          type: config.sync.backend as 'github' | 's3',
-          label: config.sync.backend === 'github' ? `GitHub (${config.sync.repo})` : `S3 (${config.sync.bucket})`,
-        },
+        backend: makeRemoteBackend(backendType, backendType === 'github' ? `GitHub (${sync.repo})` : `S3 (${sync.bucket})`),
         status: 'ok',
         detail: `removed ${removedRecords} records from ${modifiedFiles} files`,
       })
     }
   } catch (err) {
     results.push({
-      backend: {
-        type: config.sync.backend as 'github' | 's3',
-        label: config.sync.backend === 'github' ? `GitHub (${config.sync.repo})` : `S3 (${config.sync.bucket})`,
-      },
+      backend: makeRemoteBackend(backendType, backendType === 'github' ? `GitHub (${sync.repo})` : `S3 (${sync.bucket})`),
       status: 'skipped',
       detail: err instanceof Error ? err.message : 'unknown error',
     })
