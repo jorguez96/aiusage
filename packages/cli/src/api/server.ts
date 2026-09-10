@@ -4,7 +4,7 @@ import { hostname, platform, tmpdir } from 'node:os'
 import { randomBytes } from 'node:crypto'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import type Database from 'better-sqlite3'
-import { calculateCostForPrice, calculateUsageConsumption, removePriceOverride, inferProvider, normalizeQoderModel, resolveExchangeRate, fetchExchangeRate, TOOLS, type PriceEntry } from '@aiusage/core'
+import { calculateCostForPrice, calculateUsageConsumption, combineUsageConsumptions, removePriceOverride, inferProvider, normalizeQoderModel, resolveExchangeRate, fetchExchangeRate, TOOLS, type PriceEntry, type UsageConsumption } from '@aiusage/core'
 import { AIUSAGE_DIR, buildConsentConfig, loadConfig, saveConfig, loadCredential } from '../config.js'
 import type { Config, SyncConfig } from '../config.js'
 import { setSyncConsent } from '../init.js'
@@ -433,6 +433,7 @@ function getDeviceFilter(
 interface UsageQueryRow {
   tool: string
   model: string
+  provider: string
   gateway: string | null
   cost: number
   ts: number
@@ -444,6 +445,31 @@ interface UsageQueryRow {
   sessionId: string
   sourceFile: string
   cwd: string
+}
+
+function calculateUsageForRow(row: Pick<UsageQueryRow, 'cost' | 'gateway' | 'model' | 'ts' | 'inputTokens' | 'outputTokens' | 'cacheReadTokens' | 'cacheWriteTokens'>) {
+  return calculateUsageConsumption(Number(row.cost) || 0, row.gateway, row.model, undefined, {
+    timestamp: row.ts,
+    inputTokens: Number(row.inputTokens) || 0,
+    outputTokens: Number(row.outputTokens) || 0,
+    cacheReadTokens: Number(row.cacheReadTokens) || 0,
+    cacheWriteTokens: Number(row.cacheWriteTokens) || 0,
+  })
+}
+
+function usageModelKey(model: unknown, provider: unknown, gateway: unknown): string {
+  return JSON.stringify([model, provider, gateway ?? null])
+}
+
+function aggregateModelPlanUsage(rows: UsageQueryRow[]): Map<string, UsageConsumption> {
+  const byModel = new Map<string, UsageConsumption>()
+  for (const row of rows) {
+    const usage = calculateUsageForRow(row)
+    const key = usageModelKey(row.model, row.provider, row.gateway)
+    const aggregate = byModel.get(key)
+    byModel.set(key, aggregate ? combineUsageConsumptions(aggregate, usage) : usage)
+  }
+  return byModel
 }
 
 function usageDateKey(value: unknown): string | null {
@@ -461,7 +487,7 @@ function queryUsageRows(
   tf: { where: string; params: Record<string, unknown> },
 ): UsageQueryRow[] {
   const localSelect = `
-    SELECT tool, model, gateway, cost, ts,
+    SELECT tool, model, provider, gateway, cost, ts,
            input_tokens AS inputTokens,
            output_tokens AS outputTokens,
            cache_read_tokens AS cacheReadTokens,
@@ -473,7 +499,7 @@ function queryUsageRows(
     FROM records
     WHERE 1=1 ${dr.where} ${df.localOnly ? LOCAL_ONLY_FILTER : ''} ${tf.where}`
   const syncedSelect = `
-    SELECT tool, model, gateway, cost, ts,
+    SELECT tool, model, provider, gateway, cost, ts,
            input_tokens AS inputTokens,
            output_tokens AS outputTokens,
            cache_read_tokens AS cacheReadTokens,
@@ -535,7 +561,7 @@ function aggregateUsageRows(rows: UsageQueryRow[]): UsageAggregate {
     const cacheWriteTokens = Number(row.cacheWriteTokens) || 0
     const thinkingTokens = Number(row.thinkingTokens) || 0
     const totalTokens = inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens + thinkingTokens
-    const usage = calculateUsageConsumption(Number(row.cost) || 0, row.gateway, row.model)
+    const usage = calculateUsageForRow(row)
 
     totals.inputTokens += inputTokens
     totals.outputTokens += outputTokens
@@ -586,7 +612,7 @@ function aggregateCostRows(rows: UsageQueryRow[]): {
   let planDraw = 0
 
   for (const row of rows) {
-    const usage = calculateUsageConsumption(Number(row.cost) || 0, row.gateway, row.model)
+    const usage = calculateUsageForRow(row)
     const date = usageDateKey(row.ts)
     if (!date) continue
     const day = daily.get(date) ?? { cost: 0, realCost: 0, planDraw: 0 }
@@ -1015,23 +1041,28 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
           totalTokensAcrossModels = rows.reduce((sum, row) => sum + row.totalTokens, 0)
         }
 
-        const models = rows.map(r => ({
-          ...calculateUsageConsumption(Number(r.totalCost) || 0, r.gateway, r.model),
-          model: r.model,
-          provider: r.provider,
-          gateway: r.gateway ?? null,
-          callCount: r.callCount,
-          inputTokens: r.inputTokens,
-          outputTokens: r.outputTokens,
-          cacheReadTokens: r.cacheReadTokens,
-          cacheWriteTokens: r.cacheWriteTokens,
-          thinkingTokens: r.thinkingTokens,
-          totalTokens: r.totalTokens,
-          totalCost: r.totalCost,
-          percentage: totalTokensAcrossModels > 0
-            ? Math.round((r.totalTokens / totalTokensAcrossModels) * 1000) / 10
-            : 0,
-        }))
+        const modelPlanUsage = aggregateModelPlanUsage(queryUsageRows(db, dr, df, tf))
+        const models = rows.map(r => {
+          const usage = modelPlanUsage.get(usageModelKey(r.model, r.provider, r.gateway))
+            ?? calculateUsageConsumption(Number(r.totalCost) || 0, r.gateway, r.model)
+          return {
+            ...usage,
+            model: r.model,
+            provider: r.provider,
+            gateway: r.gateway ?? null,
+            callCount: r.callCount,
+            inputTokens: r.inputTokens,
+            outputTokens: r.outputTokens,
+            cacheReadTokens: r.cacheReadTokens,
+            cacheWriteTokens: r.cacheWriteTokens,
+            thinkingTokens: r.thinkingTokens,
+            totalTokens: r.totalTokens,
+            totalCost: r.totalCost,
+            percentage: totalTokensAcrossModels > 0
+              ? Math.round((r.totalTokens / totalTokensAcrossModels) * 1000) / 10
+              : 0,
+          }
+        })
 
         json(res, { models })
         return
@@ -1173,7 +1204,7 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
         let sessionRealCost = 0
         let sessionPlanDraw = 0
         const recordsWithUsage = records.map(record => {
-          const usage = calculateUsageConsumption(Number(record.cost) || 0, record.gateway, record.model)
+          const usage = calculateUsageForRow(record)
           sessionRealCost += usage.realCost
           sessionPlanDraw += usage.planDraw
           return { ...record, ...usage }
@@ -1273,7 +1304,7 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
 
         const sessionUsage = new Map<string, { realCost: number; planDraw: number }>()
         for (const row of queryUsageRows(db, dr, { ...df, useUnion: false }, tf)) {
-          const usage = calculateUsageConsumption(Number(row.cost) || 0, row.gateway, row.model)
+          const usage = calculateUsageForRow(row)
           const totals = sessionUsage.get(row.sessionId) ?? { realCost: 0, planDraw: 0 }
           totals.realCost += usage.realCost
           totals.planDraw += usage.planDraw
@@ -1326,7 +1357,7 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
 
         const planBySourceFile = new Map<string, number>()
         for (const usageRow of queryUsageRows(db, dr, { ...df, useUnion: false }, tf)) {
-          const usage = calculateUsageConsumption(Number(usageRow.cost) || 0, usageRow.gateway, usageRow.model)
+          const usage = calculateUsageForRow(usageRow)
           planBySourceFile.set(usageRow.sourceFile, (planBySourceFile.get(usageRow.sourceFile) ?? 0) + usage.planDraw)
         }
 

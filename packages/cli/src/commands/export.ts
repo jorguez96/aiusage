@@ -2,10 +2,17 @@ import type Database from 'better-sqlite3'
 import { calculateUsageConsumption } from '@aiusage/core'
 
 function usageFields(record: any) {
-  const usage = calculateUsageConsumption(Number(record.cost) || 0, record.gateway, record.model)
+  const usage = calculateUsageConsumption(Number(record.cost) || 0, record.gateway, record.model, undefined, {
+    timestamp: record.ts,
+    inputTokens: Number(record.input_tokens) || 0,
+    outputTokens: Number(record.output_tokens) || 0,
+    cacheReadTokens: Number(record.cache_read_tokens) || 0,
+    cacheWriteTokens: Number(record.cache_write_tokens) || 0,
+  })
   return {
     realCost: usage.realCost,
     planDraw: usage.planDraw,
+    rateTier: usage.rateTier,
     usageMultiplier: usage.usageMultiplier,
     usageMultiplierKnown: usage.usageMultiplierKnown,
     usageMultiplierSource: usage.usageMultiplierSource,
@@ -26,11 +33,11 @@ export function exportData(db: Database.Database, format: 'csv' | 'json' | 'ndjs
   const records = db.prepare('SELECT * FROM records').all() as any[]
 
   if (format === 'csv') {
-    const headers = 'timestamp,tool,model,provider,gateway,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,thinking_tokens,cost,real_cost,plan_draw,usage_multiplier,usage_multiplier_known,usage_multiplier_source,monthly_limit,limit_known,limit_source,five_hour_fraction,weekly_fraction,monthly_fraction,five_hour_limit,weekly_limit,monthly_plan_percentage,five_hour_plan_percentage,weekly_plan_percentage,cost_source,session_id,device,device_instance_id'
+    const headers = 'timestamp,tool,model,provider,gateway,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,thinking_tokens,cost,real_cost,plan_draw,rate_tier,usage_multiplier,usage_multiplier_known,usage_multiplier_source,monthly_limit,limit_known,limit_source,five_hour_fraction,weekly_fraction,monthly_fraction,five_hour_limit,weekly_limit,monthly_plan_percentage,five_hour_plan_percentage,weekly_plan_percentage,cost_source,session_id,device,device_instance_id'
     const rows = records.map(r => {
       const ts = new Date(r.ts).toISOString()
       const usage = usageFields(r)
-      return `${ts},${r.tool},${r.model},${r.provider},${r.gateway ?? ''},${r.input_tokens},${r.output_tokens},${r.cache_read_tokens},${r.cache_write_tokens},${r.thinking_tokens},${r.cost},${usage.realCost},${usage.planDraw},${usage.usageMultiplier},${usage.usageMultiplierKnown},${usage.usageMultiplierSource},${usage.monthlyLimit ?? ''},${usage.limitKnown},${usage.limitSource},${usage.windowFractions.fiveHour},${usage.windowFractions.weekly},${usage.windowFractions.monthly},${usage.fiveHourLimit ?? ''},${usage.weeklyLimit ?? ''},${usage.monthlyPlanPercentage ?? ''},${usage.fiveHourPlanPercentage ?? ''},${usage.weeklyPlanPercentage ?? ''},${r.cost_source},${r.session_id},${r.device},${r.device_instance_id}`
+      return `${ts},${r.tool},${r.model},${r.provider},${r.gateway ?? ''},${r.input_tokens},${r.output_tokens},${r.cache_read_tokens},${r.cache_write_tokens},${r.thinking_tokens},${r.cost},${usage.realCost},${usage.planDraw},${usage.rateTier ?? ''},${usage.usageMultiplier},${usage.usageMultiplierKnown},${usage.usageMultiplierSource},${usage.monthlyLimit ?? ''},${usage.limitKnown},${usage.limitSource},${usage.windowFractions.fiveHour},${usage.windowFractions.weekly},${usage.windowFractions.monthly},${usage.fiveHourLimit ?? ''},${usage.weeklyLimit ?? ''},${usage.monthlyPlanPercentage ?? ''},${usage.fiveHourPlanPercentage ?? ''},${usage.weeklyPlanPercentage ?? ''},${r.cost_source},${r.session_id},${r.device},${r.device_instance_id}`
     })
     return [headers, ...rows].join('\n')
   }

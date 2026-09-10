@@ -49,11 +49,11 @@ export function generateSummary(db: Database.Database, options?: SummaryOptions)
 
   const rowSelect = `
     SELECT tool, model, gateway, input_tokens, output_tokens, cache_read_tokens,
-           cache_write_tokens, thinking_tokens, cost
+           cache_write_tokens, thinking_tokens, cost, ts
     FROM records WHERE 1=1 ${currentId ? localOnlyFilter : ''} ${toolWhere} ${timeWhere}`
   const syncedRowSelect = `
     SELECT tool, model, gateway, input_tokens, output_tokens, cache_read_tokens,
-           cache_write_tokens, thinking_tokens, cost
+           cache_write_tokens, thinking_tokens, cost, ts
     FROM synced_records WHERE device_instance_id != @currentId ${toolWhere} ${timeWhere}`
 
   let rowsSql: string
@@ -79,6 +79,7 @@ export function generateSummary(db: Database.Database, options?: SummaryOptions)
     cache_write_tokens: number
     thinking_tokens: number
     cost: number
+    ts: number
   }>
   let totalTokens = 0
   let realCost = 0
@@ -90,7 +91,13 @@ export function generateSummary(db: Database.Database, options?: SummaryOptions)
       + (Number(row.cache_read_tokens) || 0)
       + (Number(row.cache_write_tokens) || 0)
       + (Number(row.thinking_tokens) || 0)
-    const usage = calculateUsageConsumption(Number(row.cost) || 0, row.gateway, row.model)
+    const usage = calculateUsageConsumption(Number(row.cost) || 0, row.gateway, row.model, undefined, {
+      timestamp: row.ts,
+      inputTokens: Number(row.input_tokens) || 0,
+      outputTokens: Number(row.output_tokens) || 0,
+      cacheReadTokens: Number(row.cache_read_tokens) || 0,
+      cacheWriteTokens: Number(row.cache_write_tokens) || 0,
+    })
     totalTokens += tokens
     realCost += usage.realCost
     planDraw += usage.planDraw

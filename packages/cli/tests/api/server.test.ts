@@ -227,6 +227,52 @@ describe('API Server', () => {
     })
   })
 
+  it('reprices time-based Go tiers per record in aggregate views', async () => {
+    const tokens = {
+      input_tokens: 1_000_000,
+      output_tokens: 1_000_000,
+      cache_read_tokens: 1_000_000,
+      cache_write_tokens: 0,
+    }
+    insertTestRecord(db, {
+      id: 'deepseek-peak-api',
+      ts: Date.parse('2026-09-10T02:00:00.000Z'),
+      model: 'deepseek-v4.1-flash',
+      provider: 'deepseek',
+      gateway: 'opencode-go',
+      ...tokens,
+      cost: 999,
+      session_id: 'deepseek-api-session',
+    })
+    insertTestRecord(db, {
+      id: 'deepseek-off-peak-api',
+      ts: Date.parse('2026-09-10T04:00:00.000Z'),
+      model: 'deepseek-v4.1-flash',
+      provider: 'deepseek',
+      gateway: 'opencode-go',
+      ...tokens,
+      cost: 999,
+      session_id: 'deepseek-api-session',
+    })
+
+    const summary = await (await fetch(`${baseUrl}/api/summary?range=all`)).json()
+    expect(summary.realCost).toBe(1998)
+    expect(summary.planDraw).toBeCloseTo(2.259, 8)
+
+    const costs = await (await fetch(`${baseUrl}/api/cost?range=all`)).json()
+    expect(costs.realCost).toBe(1998)
+    expect(costs.planDraw).toBeCloseTo(2.259, 8)
+
+    const models = await (await fetch(`${baseUrl}/api/models?range=all`)).json()
+    expect(models.models[0]).toMatchObject({
+      model: 'deepseek-v4.1-flash',
+      realCost: 1998,
+      totalCost: 1998,
+      planDraw: 2.259,
+      rateTier: null,
+    })
+  })
+
   it('keeps real and plan amounts in summary and cost aggregates', async () => {
     const now = Date.now()
     insertTestRecord(db, {

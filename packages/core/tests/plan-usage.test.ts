@@ -3,8 +3,16 @@ import {
   OPENCODE_GO_CATALOG_SNAPSHOT,
   calculateUsageConsumption,
   parseUsageMultiplier,
+  resolveOpenCodeGoRateTier,
   resolveUsagePolicy,
 } from '../src/plan-usage.js'
+
+const DEEPSEEK_TOKENS = {
+  inputTokens: 1_000_000,
+  outputTokens: 1_000_000,
+  cacheReadTokens: 1_000_000,
+  cacheWriteTokens: 1_000_000,
+}
 
 describe('plan usage policy', () => {
   it('parses a provider catalogue usage suffix', () => {
@@ -57,6 +65,92 @@ describe('plan usage policy', () => {
       { name: 'off-peak', input: 0.15, output: 0.6, cacheRead: 0.003 },
       { name: 'peak', input: 0.3, output: 1.2, cacheRead: 0.006 },
     ])
+  })
+
+  it('resolves DeepSeek peak pricing in both weekday peak windows', () => {
+    const entry = OPENCODE_GO_CATALOG_SNAPSHOT.find(model => model.model === 'deepseek-v4.1-flash')!
+
+    expect(resolveOpenCodeGoRateTier(entry, '2026-09-10T02:00:00.000Z').name).toBe('peak')
+    expect(resolveOpenCodeGoRateTier(entry, '2026-09-10T07:00:00.000Z').name).toBe('peak')
+
+    const firstWindow = calculateUsageConsumption(999, 'opencode-go', entry.model, undefined, {
+      timestamp: '2026-09-10T02:00:00.000Z',
+      ...DEEPSEEK_TOKENS,
+    })
+    const secondWindow = calculateUsageConsumption(999, 'opencode-go', entry.model, undefined, {
+      timestamp: '2026-09-10T07:00:00.000Z',
+      ...DEEPSEEK_TOKENS,
+    })
+
+    expect(firstWindow.realCost).toBe(999)
+    expect(firstWindow.planDraw).toBeCloseTo(1.506, 8)
+    expect(firstWindow.rateTier).toBe('peak')
+    expect(secondWindow.planDraw).toBeCloseTo(1.506, 8)
+    expect(secondWindow.rateTier).toBe('peak')
+  })
+
+  it('uses off-peak pricing just outside the half-open weekday peak windows', () => {
+    const entry = OPENCODE_GO_CATALOG_SNAPSHOT.find(model => model.model === 'deepseek-v4.1-flash')!
+
+    // Peak windows are half-open: 01:00 inclusive through 04:00 exclusive,
+    // and 06:00 inclusive through 10:00 exclusive, all in UTC.
+    expect(resolveOpenCodeGoRateTier(entry, '2026-09-10T01:00:00.000Z').name).toBe('peak')
+    expect(resolveOpenCodeGoRateTier(entry, '2026-09-10T00:59:59.999Z').name).toBe('off-peak')
+    expect(resolveOpenCodeGoRateTier(entry, '2026-09-10T06:00:00.000Z').name).toBe('peak')
+    expect(resolveOpenCodeGoRateTier(entry, '2026-09-10T04:00:00.000Z').name).toBe('off-peak')
+    expect(resolveOpenCodeGoRateTier(entry, '2026-09-10T10:00:00.000Z').name).toBe('off-peak')
+
+    const usage = calculateUsageConsumption(999, 'opencode-go', entry.model, undefined, {
+      timestamp: '2026-09-10T04:00:00.000Z',
+      ...DEEPSEEK_TOKENS,
+    })
+
+    expect(usage.planDraw).toBeCloseTo(0.753, 8)
+    expect(usage.rateTier).toBe('off-peak')
+  })
+
+  it('keeps DeepSeek off-peak on weekends even during peak hours', () => {
+    const usage = calculateUsageConsumption(999, 'opencode-go', 'deepseek-v4.1-flash', undefined, {
+      timestamp: '2026-09-12T02:00:00.000Z',
+      ...DEEPSEEK_TOKENS,
+    })
+
+    expect(usage.planDraw).toBeCloseTo(0.753, 8)
+    expect(usage.rateTier).toBe('off-peak')
+  })
+
+  it('leaves single-tier pricing unchanged while reporting its standard tier', () => {
+    const usage = calculateUsageConsumption(9.4739, 'opencode-go', 'glm-5.3-flash', undefined, {
+      timestamp: '2026-09-10T02:00:00.000Z',
+      ...DEEPSEEK_TOKENS,
+    })
+
+    expect(usage.realCost).toBe(9.4739)
+    expect(usage.planDraw).toBeCloseTo(18.9478, 8)
+    expect(usage.rateTier).toBe('standard')
+  })
+
+  it('does not reprice a time-tier model outside the Go gateway', () => {
+    const usage = calculateUsageConsumption(999, 'openrouter', 'deepseek-v4.1-flash', undefined, {
+      timestamp: '2026-09-10T02:00:00.000Z',
+      ...DEEPSEEK_TOKENS,
+    })
+
+    expect(usage.realCost).toBe(999)
+    expect(usage.planDraw).toBe(999)
+    expect(usage.rateTier).toBeNull()
+  })
+
+  it('does not guess a context-length tier for unresolved multi-tier models', () => {
+    const entry = OPENCODE_GO_CATALOG_SNAPSHOT.find(model => model.model === 'qwen3.7-plus')!
+
+    expect(resolveOpenCodeGoRateTier(entry, '2026-09-10T02:00:00.000Z')).toBeUndefined()
+    const usage = calculateUsageConsumption(1, 'opencode-go', entry.model, undefined, {
+      timestamp: '2026-09-10T02:00:00.000Z',
+      ...DEEPSEEK_TOKENS,
+    })
+    expect(usage.planDraw).toBe(1)
+    expect(usage.rateTier).toBeNull()
   })
 
   it('can take a multiplier directly from provider metadata without widening gateway scope', () => {
