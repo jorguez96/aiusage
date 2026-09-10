@@ -69,8 +69,12 @@
       <span class="hero-value">{formatTokens(data.totalTokens)}</span>
     </div>
     <div class="hero-card">
-      <span class="hero-label">{$t('overview.totalCost')}</span>
-      <span class="hero-value">{formatCost(data.totalCost)}</span>
+      <span class="hero-label">{$t('overview.realCost')}</span>
+      <span class="hero-value">{formatCost(data.realCost ?? data.totalCost ?? 0)}</span>
+    </div>
+    <div class="hero-card">
+      <span class="hero-label">{$t('overview.planDraw')}</span>
+      <span class="hero-value">{formatCost(data.planDraw ?? data.totalCost ?? 0)}</span>
     </div>
     <div class="hero-card">
       <span class="hero-label">{$t('overview.activeDays')}</span>
@@ -112,7 +116,8 @@
             <tr>
               <th>{$t('overview.tool')}</th>
               <th>{$t('overview.tokens')}</th>
-              <th>{$t('overview.cost')}</th>
+              <th>{$t('overview.realCost')}</th>
+              <th>{$t('overview.planDraw')}</th>
             </tr>
           </thead>
           <tbody>
@@ -120,7 +125,8 @@
               <tr>
                 <td class="mono">{tool}</td>
                 <td class="mono">{formatTokens(stats.tokens)}</td>
-                <td class="mono accent">{formatCost(stats.cost)}</td>
+                <td class="mono accent">{formatCost(stats.realCost ?? stats.cost ?? 0)}</td>
+                <td class="mono accent">{formatCost(stats.planDraw ?? stats.cost ?? 0)}</td>
               </tr>
             {/each}
           </tbody>
@@ -176,7 +182,7 @@
 <style>
   .hero-stats {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(5, 1fr);
     gap: 1rem;
     margin-bottom: 1.5rem;
   }

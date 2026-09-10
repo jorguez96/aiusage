@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3'
+import { calculateUsageConsumption } from '@aiusage/core'
 import { getToolCallStats } from '../db/tool-calls.js'
 import { LOCAL_RECORDS_WHERE } from '../db/records.js'
 
@@ -13,21 +14,25 @@ export interface SummaryOptions {
 export interface SummaryResult {
   totalTokens: number
   totalCost: number
+  realCost: number
+  planDraw: number
   recordCount: number
-  byTool: Record<string, { tokens: number; cost: number }>
+  byTool: Record<string, { tokens: number; cost: number; realCost: number; planDraw: number }>
   topToolCalls: Array<{ name: string; count: number }>
   deviceCount: number
   deviceLabel: string | null
 }
 
+// Keep aggregate output stable when the same records arrive in a different
+// local/synced row order. JavaScript's binary floating-point addition otherwise
+// makes equivalent cost totals differ by a few ulps across devices.
+function normalizeCost(value: number): number {
+  return Number(value.toFixed(12))
+}
+
 export function generateSummary(db: Database.Database, options?: SummaryOptions): SummaryResult {
   const currentId = options?.currentDeviceInstanceId
   const device = options?.device
-
-  let totalsSql: string
-  let totalsParams: Record<string, unknown> = {}
-  let byToolSql: string
-  let byToolParams: Record<string, unknown> = {}
 
   // Rows merged from synced_records carry origin = 'synced'; they are counted via synced_records instead.
   const localOnlyFilter = `AND ${LOCAL_RECORDS_WHERE}`
@@ -42,73 +47,59 @@ export function generateSummary(db: Database.Database, options?: SummaryOptions)
     ...(typeof options?.endTs === 'number' ? { endTs: options.endTs } : {}),
   }
 
+  const rowSelect = `
+    SELECT tool, model, gateway, input_tokens, output_tokens, cache_read_tokens,
+           cache_write_tokens, thinking_tokens, cost
+    FROM records WHERE 1=1 ${currentId ? localOnlyFilter : ''} ${toolWhere} ${timeWhere}`
+  const syncedRowSelect = `
+    SELECT tool, model, gateway, input_tokens, output_tokens, cache_read_tokens,
+           cache_write_tokens, thinking_tokens, cost
+    FROM synced_records WHERE device_instance_id != @currentId ${toolWhere} ${timeWhere}`
+
+  let rowsSql: string
+  let params: Record<string, unknown>
   if (currentId && !device) {
-    // All devices: UNION (exclude merged synced records from records to avoid double-counting)
-    totalsSql = `
-      SELECT
-        COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens + thinking_tokens), 0) AS totalTokens,
-        COALESCE(SUM(cost), 0) AS totalCost,
-        COUNT(*) AS recordCount
-      FROM (
-        SELECT input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, thinking_tokens, cost FROM records WHERE 1=1 ${localOnlyFilter} ${toolWhere} ${timeWhere}
-        UNION ALL
-        SELECT input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, thinking_tokens, cost FROM synced_records WHERE device_instance_id != @currentId ${toolWhere} ${timeWhere}
-      )`
-    totalsParams = { currentId, ...toolParam, ...timeParam }
-
-    byToolSql = `
-      SELECT tool,
-             SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens + thinking_tokens) AS tokens,
-             SUM(cost) AS cost
-      FROM (
-        SELECT tool, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, thinking_tokens, cost FROM records WHERE 1=1 ${localOnlyFilter} ${toolWhere} ${timeWhere}
-        UNION ALL
-        SELECT tool, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, thinking_tokens, cost FROM synced_records WHERE device_instance_id != @currentId ${toolWhere} ${timeWhere}
-      )
-      GROUP BY tool ORDER BY cost DESC`
-    byToolParams = { currentId, ...toolParam, ...timeParam }
+    rowsSql = `${rowSelect} UNION ALL ${syncedRowSelect}`
+    params = { currentId, ...toolParam, ...timeParam }
   } else if (currentId && device && device !== currentId) {
-    // Specific other device
-    totalsSql = `
-      SELECT
-        COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens + thinking_tokens), 0) AS totalTokens,
-        COALESCE(SUM(cost), 0) AS totalCost,
-        COUNT(*) AS recordCount
-      FROM synced_records WHERE device_instance_id = @device ${toolWhere} ${timeWhere}`
-    totalsParams = { device, ...toolParam, ...timeParam }
-
-    byToolSql = `
-      SELECT tool,
-             SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens + thinking_tokens) AS tokens,
-             SUM(cost) AS cost
-      FROM synced_records WHERE device_instance_id = @device ${toolWhere} ${timeWhere}
-      GROUP BY tool ORDER BY cost DESC`
-    byToolParams = { device, ...toolParam, ...timeParam }
+    rowsSql = syncedRowSelect.replace('device_instance_id != @currentId', 'device_instance_id = @device')
+    params = { device, ...toolParam, ...timeParam }
   } else {
-    // Local only (current device specified or no currentId)
-    totalsSql = `
-      SELECT
-        COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens + thinking_tokens), 0) AS totalTokens,
-        COALESCE(SUM(cost), 0) AS totalCost,
-        COUNT(*) AS recordCount
-      FROM records WHERE 1=1 ${currentId ? localOnlyFilter : ''} ${toolWhere} ${timeWhere}`
-    totalsParams = { ...toolParam, ...timeParam }
-
-    byToolSql = `
-      SELECT tool,
-             SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens + thinking_tokens) AS tokens,
-             SUM(cost) AS cost
-      FROM records WHERE 1=1 ${currentId ? localOnlyFilter : ''} ${toolWhere} ${timeWhere}
-      GROUP BY tool ORDER BY cost DESC`
-    byToolParams = { ...toolParam, ...timeParam }
+    rowsSql = rowSelect
+    params = { ...toolParam, ...timeParam }
   }
 
-  const totals = db.prepare(totalsSql).get(totalsParams) as { totalTokens: number; totalCost: number; recordCount: number }
-
-  const byToolRows = db.prepare(byToolSql).all(byToolParams) as Array<{ tool: string; tokens: number; cost: number }>
-  const byTool: Record<string, { tokens: number; cost: number }> = {}
-  for (const row of byToolRows) {
-    byTool[row.tool] = { tokens: row.tokens, cost: row.cost }
+  const rows = db.prepare(rowsSql).all(params) as Array<{
+    tool: string
+    model: string
+    gateway: string | null
+    input_tokens: number
+    output_tokens: number
+    cache_read_tokens: number
+    cache_write_tokens: number
+    thinking_tokens: number
+    cost: number
+  }>
+  let totalTokens = 0
+  let realCost = 0
+  let planDraw = 0
+  const byTool: SummaryResult['byTool'] = {}
+  for (const row of rows) {
+    const tokens = (Number(row.input_tokens) || 0)
+      + (Number(row.output_tokens) || 0)
+      + (Number(row.cache_read_tokens) || 0)
+      + (Number(row.cache_write_tokens) || 0)
+      + (Number(row.thinking_tokens) || 0)
+    const usage = calculateUsageConsumption(Number(row.cost) || 0, row.gateway, row.model)
+    totalTokens += tokens
+    realCost += usage.realCost
+    planDraw += usage.planDraw
+    const tool = byTool[row.tool] ?? { tokens: 0, cost: 0, realCost: 0, planDraw: 0 }
+    tool.tokens += tokens
+    tool.cost += usage.realCost
+    tool.realCost += usage.realCost
+    tool.planDraw += usage.planDraw
+    byTool[row.tool] = tool
   }
 
   const toolCallStats = getToolCallStats(db)
@@ -128,10 +119,17 @@ export function generateSummary(db: Database.Database, options?: SummaryOptions)
   }
 
   return {
-    totalTokens: totals.totalTokens,
-    totalCost: totals.totalCost,
-    recordCount: totals.recordCount,
-    byTool,
+    totalTokens,
+    totalCost: normalizeCost(realCost),
+    realCost: normalizeCost(realCost),
+    planDraw: normalizeCost(planDraw),
+    recordCount: rows.length,
+    byTool: Object.fromEntries(Object.entries(byTool).map(([tool, stats]) => [tool, {
+      ...stats,
+      cost: normalizeCost(stats.cost),
+      realCost: normalizeCost(stats.realCost),
+      planDraw: normalizeCost(stats.planDraw),
+    }])),
     topToolCalls: toolCallStats.slice(0, 3),
     deviceCount,
     deviceLabel,

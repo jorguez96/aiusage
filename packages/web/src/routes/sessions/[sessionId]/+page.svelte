@@ -137,8 +137,12 @@
     <div class="metrics card">
       <div class="metrics-grid">
         <div class="metric-cell">
-          <span class="metric-label">{$t('sessions.detail.meta.cost')}</span>
-          <span class="metric-value mono accent">{formatCost(session.cost)}</span>
+          <span class="metric-label">{$t('sessions.detail.meta.realCost')}</span>
+          <span class="metric-value mono accent">{formatCost(session.realCost ?? session.cost ?? 0)}</span>
+        </div>
+        <div class="metric-cell">
+          <span class="metric-label">{$t('sessions.detail.meta.planDraw')}</span>
+          <span class="metric-value mono">{formatCost(session.planDraw ?? session.cost ?? 0)}</span>
         </div>
         <div class="metric-cell">
           <span class="metric-label">{$t('sessions.detail.meta.totalTokens')}</span>
@@ -207,7 +211,8 @@
             <span class="record-relts mono muted">{formatRelativeTs(record.ts - session.firstTs)}</span>
             <span class="record-model mono">{record.model}</span>
           </div>
-          <span class="record-cost mono accent">{formatCost(record.cost)}</span>
+          <span class="record-cost mono accent" title={$t('sessions.detail.meta.realCost')}>{formatCost(record.realCost ?? record.cost ?? 0)}</span>
+          <span class="record-cost mono" title={$t('sessions.detail.meta.planDraw')}>{formatCost(record.planDraw ?? record.cost ?? 0)}</span>
         </div>
 
         <div class="record-tokens">
@@ -354,7 +359,7 @@
   }
   .metrics-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(5, 1fr);
     gap: 0.5rem;
   }
   .metric-cell {

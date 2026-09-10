@@ -75,6 +75,32 @@ describe('Summary Command', () => {
     expect(summary.recordCount).toBe(0)
   })
 
+  it('keeps observed cost separate from gateway-scoped plan draw', () => {
+    insertRecord(db, createTestRecord({
+      id: 'go-glm',
+      tool: 'opencode',
+      model: 'glm-5.3-flash',
+      provider: 'zhipu',
+      gateway: 'opencode-go',
+      cost: 1,
+    }))
+    insertRecord(db, createTestRecord({
+      id: 'router-glm',
+      tool: 'opencode',
+      model: 'glm-5.3-flash',
+      provider: 'zhipu',
+      gateway: 'openrouter',
+      cost: 1,
+    }))
+
+    const summary = generateSummary(db)
+
+    expect(summary.totalCost).toBe(2)
+    expect(summary.realCost).toBe(2)
+    expect(summary.planDraw).toBe(3)
+    expect(summary.byTool.opencode).toMatchObject({ cost: 2, realCost: 2, planDraw: 3 })
+  })
+
   it('includes top tool calls', () => {
     insertRecord(db, createTestRecord({ id: 'r1' }))
     insertToolCall(db, { id: 'tc1', recordId: 'r1', name: 'Read', ts: Date.now(), callIndex: 0 })

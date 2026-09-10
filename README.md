@@ -96,6 +96,27 @@ when available. Gateway-specific rate cards are not guessed: when a source does
 not log a positive cost, the model pricing registry remains the fallback and
 the row is not silently gateway-price-adjusted.
 
+### Real cost and OpenCode Go plan draw
+
+Exports and dashboard/API cost views keep `cost`/`realCost` as the observed
+source cost and expose `planDraw` separately. Plan draw is the observed base
+cost multiplied only when both the serving gateway and model match the
+OpenCode Go usage policy. For example, `glm-5.3-flash` is 2x through
+`opencode-go`, but remains 1x through OpenRouter. Missing or unknown gateway
+metadata never inherits the Go multiplier: it is reported as 1x assumed with
+an unknown multiplier source.
+
+The OpenCode Go policy carries each model's monthly limit and its 5-hour and
+weekly windows (20% and 50% of that model's own monthly limit). Percentages in
+the Models view and `/api/models` use the model-specific monthly limit; they do
+not treat the plan as one shared $60 pool. The rate/limit snapshot is refreshed
+from the published 2026-09-10 card in the core plan-usage module. It retains
+both DeepSeek peak and off-peak tiers (peak is 2x off-peak at the published
+UTC weekday hours). AIUsage does not re-price DeepSeek rows from their
+timestamps: row-level plan draw trusts the observed base cost and applies only
+the gateway/model usage multiplier, while the snapshot preserves those tiers
+for rate-card refreshes and audits.
+
 ## Supported Tools
 
 | | | | | |

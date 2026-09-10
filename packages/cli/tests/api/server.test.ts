@@ -183,6 +183,81 @@ describe('API Server', () => {
     expect(data).toHaveProperty('totalCost')
   })
 
+  it('reports gateway-scoped real cost, plan draw, and per-model limits', async () => {
+    const now = Date.now()
+    insertTestRecord(db, {
+      id: 'go-glm-model',
+      ts: now,
+      model: 'glm-5.3-flash',
+      provider: 'zhipu',
+      gateway: 'opencode-go',
+      cost: 1,
+    })
+    insertTestRecord(db, {
+      id: 'router-glm-model',
+      ts: now + 1,
+      model: 'glm-5.3-flash',
+      provider: 'zhipu',
+      gateway: 'openrouter',
+      cost: 1,
+    })
+
+    const response = await fetch(`${baseUrl}/api/models?range=all`)
+    expect(response.ok).toBe(true)
+    const data = await response.json()
+    const go = data.models.find((model: { gateway: string }) => model.gateway === 'opencode-go')
+    const router = data.models.find((model: { gateway: string }) => model.gateway === 'openrouter')
+
+    expect(go).toMatchObject({
+      realCost: 1,
+      totalCost: 1,
+      planDraw: 2,
+      usageMultiplier: 2,
+      usageMultiplierKnown: true,
+      monthlyLimit: 60,
+      windowLimits: { fiveHour: 12, weekly: 30, monthly: 60 },
+    })
+    expect(router).toMatchObject({
+      realCost: 1,
+      totalCost: 1,
+      planDraw: 1,
+      usageMultiplier: 1,
+      usageMultiplierKnown: false,
+      monthlyLimit: null,
+    })
+  })
+
+  it('keeps real and plan amounts in summary and cost aggregates', async () => {
+    const now = Date.now()
+    insertTestRecord(db, {
+      id: 'go-glm-aggregate',
+      ts: now,
+      tool: 'opencode',
+      model: 'glm-5.3-flash',
+      provider: 'zhipu',
+      gateway: 'opencode-go',
+      cost: 2,
+    })
+    insertTestRecord(db, {
+      id: 'router-glm-aggregate',
+      ts: now + 1,
+      tool: 'opencode',
+      model: 'glm-5.3-flash',
+      provider: 'zhipu',
+      gateway: 'openrouter',
+      cost: 3,
+    })
+
+    const summary = await (await fetch(`${baseUrl}/api/summary?range=all`)).json()
+    expect(summary).toMatchObject({ totalCost: 5, realCost: 5, planDraw: 7 })
+    expect(summary.byTool.opencode).toMatchObject({ cost: 5, realCost: 5, planDraw: 7 })
+
+    const costs = await (await fetch(`${baseUrl}/api/cost?range=all`)).json()
+    expect(costs).toMatchObject({ realCost: 5, planDraw: 7 })
+    expect(costs.byToolRealCost.opencode).toBe(5)
+    expect(costs.byToolPlanDraw.opencode).toBe(7)
+  })
+
   it('returns 400 for invalid range', async () => {
     const response = await fetch(`${baseUrl}/api/summary?range=invalid`)
     expect(response.status).toBe(400)
@@ -874,7 +949,7 @@ describe('Device filtering', () => {
     ]))
   })
 
-  it('models returns an empty list when only unknown models match', async () => {
+  it('models keeps unknown rows with an honest 1x fallback', async () => {
     insertTestRecord(db, {
       id: 'localunknown001',
       model: 'unknown',
@@ -890,7 +965,16 @@ describe('Device filtering', () => {
     expect(res.ok).toBe(true)
     const data = await res.json()
 
-    expect(data.models).toEqual([])
+    expect(data.models).toHaveLength(1)
+    expect(data.models[0]).toMatchObject({
+      model: 'unknown',
+      realCost: 0.001,
+      totalCost: 0.001,
+      planDraw: 0.001,
+      usageMultiplier: 1,
+      usageMultiplierKnown: false,
+      monthlyLimit: null,
+    })
   })
 
   it('models returns synced-only breakdown for a remote device', async () => {

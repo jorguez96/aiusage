@@ -53,6 +53,7 @@
 
   const tTokens   = tweened(0, { duration: 2600, easing: cubicOut })
   const tCost     = tweened(0, { duration: 2300, easing: cubicOut })
+  const tPlan     = tweened(0, { duration: 2300, easing: cubicOut })
   const tSessions = tweened(0, { duration: 1900, easing: cubicOut })
   const tDays     = tweened(0, { duration: 1600, easing: cubicOut })
 
@@ -64,7 +65,8 @@
       if (newData) {
         data = newData
         tTokens.set(newData.totalTokens,       { duration: d })
-        tCost.set(newData.totalCost,           { duration: Math.round(d * 0.88) })
+        tCost.set(newData.realCost ?? newData.totalCost ?? 0, { duration: Math.round(d * 0.88) })
+        tPlan.set(newData.planDraw ?? newData.totalCost ?? 0,  { duration: Math.round(d * 0.82) })
         tSessions.set(newData.totalSessions || 0, { duration: Math.round(d * 0.73) })
         tDays.set(newData.activeDays,          { duration: Math.round(d * 0.62) })
         barsReady = false
@@ -80,6 +82,7 @@
     loading = true
     tTokens.set(0, { duration: 0 })
     tCost.set(0,   { duration: 0 })
+    tPlan.set(0,   { duration: 0 })
     tSessions.set(0, { duration: 0 })
     tDays.set(0,   { duration: 0 })
     barsReady = false
@@ -170,6 +173,7 @@
 
   // Reactive cost formatting — depends on $displayCurrency and $exchangeRate so it re-evaluates on currency change
   $: formattedCost = (() => { void $displayCurrency; void $exchangeRate; return formatCost($tCost) })()
+  $: formattedPlanDraw = (() => { void $displayCurrency; void $exchangeRate; return formatCost($tPlan) })()
 
   // Quota warning: load once on mount, show banner when any tier >= 80%
   let quotaWarnings = []
@@ -373,8 +377,12 @@
 
   <div class="stats-strip">
     <div class="stat-block">
-      <span class="stat-label">{$t('overview.totalCost')}</span>
+      <span class="stat-label">{$t('overview.realCost')}</span>
       <span class="stat-value stat-cost">{formattedCost}</span>
+    </div>
+    <div class="stat-block">
+      <span class="stat-label">{$t('overview.planDraw')}</span>
+      <span class="stat-value stat-cost">{formattedPlanDraw}</span>
     </div>
     <div class="stat-block">
       <span class="stat-label">{$t('overview.totalSessions')}</span>

@@ -65,7 +65,8 @@
           <div class="bar" style="width: {proj.percentage}%"></div>
         </div>
         <span class="tokens mono">{formatTokens(proj.tokens)}</span>
-        <span class="cost mono accent">{formatCost(proj.cost)}</span>
+        <span class="cost mono accent" title={$t('projects.realCost')}>{formatCost(proj.realCost ?? proj.cost ?? 0)}</span>
+        <span class="cost mono" title={$t('projects.planDraw')}>{formatCost(proj.planDraw ?? proj.cost ?? 0)}</span>
         <span class="pct mono">{proj.percentage.toFixed(1)}%</span>
       </div>
     {/each}
@@ -80,7 +81,7 @@
   }
   .row {
     display: grid;
-    grid-template-columns: 2.5rem 16rem 1fr 5.5rem 4.5rem 3.5rem;
+    grid-template-columns: 2.5rem 16rem 1fr 5.5rem 4.5rem 4.5rem 3.5rem;
     align-items: center;
     gap: 0.75rem;
     padding: 0.65rem 0.85rem;

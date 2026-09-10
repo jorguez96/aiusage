@@ -63,4 +63,44 @@ describe('Export Command', () => {
     expect(record.tool).toBe('claude-code')
     expect(record.gateway).toBe('anthropic')
   })
+
+  it('exports real cost and gateway-scoped plan draw metadata', () => {
+    insertRecord(db, {
+      id: 'go-glm', ts: 1776738085346, ingestedAt: 1776738085700, updatedAt: 1776738085700,
+      lineOffset: 101, tool: 'opencode', model: 'glm-5.3-flash', provider: 'zhipu',
+      gateway: 'opencode-go',
+      inputTokens: 1000, outputTokens: 500, cacheReadTokens: 0, cacheWriteTokens: 0,
+      thinkingTokens: 0, cost: 1, costSource: 'log', sessionId: 'go-session',
+      sourceFile: '/path/to/go.jsonl', device: 'test-device', deviceInstanceId: 'device-123',
+    })
+    insertRecord(db, {
+      id: 'router-glm', ts: 1776738085347, ingestedAt: 1776738085700, updatedAt: 1776738085700,
+      lineOffset: 102, tool: 'opencode', model: 'glm-5.3-flash', provider: 'zhipu',
+      gateway: 'openrouter',
+      inputTokens: 1000, outputTokens: 500, cacheReadTokens: 0, cacheWriteTokens: 0,
+      thinkingTokens: 0, cost: 1, costSource: 'log', sessionId: 'router-session',
+      sourceFile: '/path/to/router.jsonl', device: 'test-device', deviceInstanceId: 'device-123',
+    })
+
+    const json = JSON.parse(exportData(db, 'json'))
+    const go = json.find((record: { id?: string; sessionId: string }) => record.sessionId === 'go-session')
+    const router = json.find((record: { sessionId: string }) => record.sessionId === 'router-session')
+
+    expect(go).toMatchObject({
+      cost: 1,
+      realCost: 1,
+      planDraw: 2,
+      usageMultiplier: 2,
+      usageMultiplierKnown: true,
+      monthlyLimit: 60,
+    })
+    expect(router).toMatchObject({
+      cost: 1,
+      realCost: 1,
+      planDraw: 1,
+      usageMultiplier: 1,
+      usageMultiplierKnown: false,
+      monthlyLimit: null,
+    })
+  })
 })
