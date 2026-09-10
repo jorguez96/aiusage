@@ -189,7 +189,7 @@ describe('gateway attribution across sync', () => {
       expect.objectContaining({ id: bGenuineWire.id, gateway: 'gateway-b' }),
     ])
     expect(dbB.prepare('SELECT id FROM synced_records WHERE id = ?').get(echo.id)).toBeUndefined()
-    expect(dbB.prepare('SELECT gateway FROM records WHERE id = ?').get(source.id)).toBeUndefined()
+    expect(dbB.prepare('SELECT id FROM records WHERE id = ?').get(echo.id)).toBeUndefined()
     expect(dbB.prepare('SELECT gateway FROM records WHERE id = ?').get(bGenuine.id)).toEqual({ gateway: 'gateway-b' })
   })
 })
