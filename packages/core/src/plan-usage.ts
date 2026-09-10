@@ -195,9 +195,18 @@ export interface UsagePolicy {
   windowLimits: PlanWindowLimits
 }
 
+export interface UsageConsumptionDetails {
+  timestamp: Date | number | string
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+}
+
 export interface UsageConsumption extends UsagePolicy {
   realCost: number
   planDraw: number
+  rateTier: OpenCodeGoRateTierName | null
   windowPercentages: PlanWindowLimits
 }
 
@@ -224,6 +233,11 @@ function normalizeModel(model: unknown): string | undefined {
 
 const CATALOG_BY_MODEL = new Map(OPENCODE_GO_CATALOG_SNAPSHOT.map(entry => [entry.model, entry]))
 
+function resolveOpenCodeGoCatalogEntry(gateway: unknown, model: unknown): OpenCodeGoCatalogEntry | undefined {
+  if (normalizeGateway(gateway) !== OPENCODE_GO_GATEWAY) return undefined
+  return CATALOG_BY_MODEL.get(normalizeModel(model) ?? '')
+}
+
 function unknownPolicy(): UsagePolicy {
   return {
     usageMultiplier: 1,
@@ -244,7 +258,7 @@ function unknownPolicy(): UsagePolicy {
 export function resolveUsagePolicy(gateway: unknown, model: unknown, displayName?: unknown): UsagePolicy {
   if (normalizeGateway(gateway) !== OPENCODE_GO_GATEWAY) return unknownPolicy()
 
-  const entry = CATALOG_BY_MODEL.get(normalizeModel(model) ?? '')
+  const entry = resolveOpenCodeGoCatalogEntry(gateway, model)
   const providerMultiplier = parseUsageMultiplier(displayName)
   const usageMultiplier = providerMultiplier ?? entry?.usageMultiplier
   const monthlyLimit = entry?.monthlyLimit ?? null
@@ -276,24 +290,120 @@ function percentage(value: number, limit: number | null): number | null {
   return limit == null || limit <= 0 ? null : (value / limit) * 100
 }
 
+function toUtcDate(timestamp: unknown): Date | undefined {
+  let date: Date
+  if (timestamp instanceof Date) {
+    date = timestamp
+  } else if (typeof timestamp === 'number') {
+    date = new Date(timestamp)
+  } else if (typeof timestamp === 'string' && timestamp.trim()) {
+    const numericTimestamp = Number(timestamp)
+    date = Number.isFinite(numericTimestamp) ? new Date(numericTimestamp) : new Date(timestamp)
+  } else {
+    return undefined
+  }
+
+  return Number.isFinite(date.getTime()) ? date : undefined
+}
+
+function isTimeBasedRateTiers(entry: OpenCodeGoCatalogEntry): boolean {
+  return entry.rateTiers.some(tier => tier.name === 'off-peak')
+    && entry.rateTiers.some(tier => tier.name === 'peak')
+}
+
+/**
+ * Resolve a catalog entry's time-based rate tier in UTC. Peak boundaries are
+ * half-open: 01:00 <= time < 04:00 and 06:00 <= time < 10:00 on weekdays.
+ */
+export function resolveOpenCodeGoRateTier(
+  entry: OpenCodeGoCatalogEntry,
+  timestamp: Date | number | string,
+): OpenCodeGoRateTier | undefined {
+  const firstTier = entry.rateTiers[0]
+  if (!firstTier) return undefined
+  if (entry.rateTiers.length === 1) return firstTier
+
+  const offPeakTier = entry.rateTiers.find(tier => tier.name === 'off-peak')
+  const peakTier = entry.rateTiers.find(tier => tier.name === 'peak')
+  if (!offPeakTier || !peakTier) {
+    // Short-context/long-context tier selection remains unresolved.
+    return undefined
+  }
+
+  const date = toUtcDate(timestamp)
+  if (!date) return offPeakTier
+
+  const weekday = date.getUTCDay() >= 1 && date.getUTCDay() <= 5
+  const hour = date.getUTCHours()
+  const inPeakWindow = (hour >= 1 && hour < 4) || (hour >= 6 && hour < 10)
+  return weekday && inPeakWindow ? peakTier : offPeakTier
+}
+
+function calculateRateTierCost(tier: OpenCodeGoRateTier, details: UsageConsumptionDetails): number {
+  const inputCost = (details.inputTokens / 1_000_000) * tier.input
+  const outputCost = (details.outputTokens / 1_000_000) * tier.output
+  const cacheReadCost = (details.cacheReadTokens / 1_000_000) * tier.cacheRead
+  const cacheWriteCost = (details.cacheWriteTokens / 1_000_000) * (tier.cacheWrite ?? 0)
+  return inputCost + outputCost + cacheReadCost + cacheWriteCost
+}
+
 export function calculateUsageConsumption(
   realCost: number,
   gateway: unknown,
   model: unknown,
   displayName?: unknown,
+  details?: UsageConsumptionDetails,
 ): UsageConsumption {
   const policy = resolveUsagePolicy(gateway, model, displayName)
   const safeRealCost = Number.isFinite(realCost) ? realCost : 0
-  const planDraw = safeRealCost * policy.usageMultiplier
+  const entry = resolveOpenCodeGoCatalogEntry(gateway, model)
+  let planCost = safeRealCost
+  let rateTier: OpenCodeGoRateTierName | null = entry?.rateTiers.length === 1
+    ? entry.rateTiers[0].name
+    : null
+
+  if (entry && isTimeBasedRateTiers(entry) && details && toUtcDate(details.timestamp)
+    && Number.isFinite(details.inputTokens)
+    && Number.isFinite(details.outputTokens)
+    && Number.isFinite(details.cacheReadTokens)
+    && Number.isFinite(details.cacheWriteTokens)) {
+    const tier = resolveOpenCodeGoRateTier(entry, details.timestamp)
+    if (tier) {
+      planCost = calculateRateTierCost(tier, details)
+      rateTier = tier.name
+    }
+  }
+
+  const planDraw = planCost * policy.usageMultiplier
 
   return {
     ...policy,
     realCost: safeRealCost,
     planDraw,
+    rateTier,
     windowPercentages: {
       fiveHour: percentage(planDraw, policy.windowLimits.fiveHour),
       weekly: percentage(planDraw, policy.windowLimits.weekly),
       monthly: percentage(planDraw, policy.windowLimits.monthly),
+    },
+  }
+}
+
+/** Combine row-level usage while keeping plan accounting in this module. */
+export function combineUsageConsumptions(
+  first: UsageConsumption,
+  second: UsageConsumption,
+): UsageConsumption {
+  const planDraw = first.planDraw + second.planDraw
+  return {
+    ...first,
+    realCost: first.realCost + second.realCost,
+    planDraw,
+    rateTier: first.rateTier === second.rateTier ? first.rateTier : null,
+    windowPercentages: {
+      fiveHour: percentage(planDraw, first.windowLimits.fiveHour),
+      weekly: percentage(planDraw, first.windowLimits.weekly),
+      monthly: percentage(planDraw, first.windowLimits.monthly),
     },
   }
 }

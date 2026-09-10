@@ -90,6 +90,7 @@ describe('Export Command', () => {
       cost: 1,
       realCost: 1,
       planDraw: 2,
+      rateTier: 'standard',
       usageMultiplier: 2,
       usageMultiplierKnown: true,
       monthlyLimit: 60,
@@ -102,5 +103,27 @@ describe('Export Command', () => {
       usageMultiplierKnown: false,
       monthlyLimit: null,
     })
+  })
+
+  it('exports the time-based rate tier and repriced plan draw', () => {
+    insertRecord(db, {
+      id: 'go-deepseek-peak', ts: Date.parse('2026-09-10T02:00:00.000Z'), ingestedAt: 1776738085700, updatedAt: 1776738085700,
+      lineOffset: 103, tool: 'opencode', model: 'deepseek-v4.1-flash', provider: 'deepseek',
+      gateway: 'opencode-go', inputTokens: 1_000_000, outputTokens: 1_000_000, cacheReadTokens: 1_000_000, cacheWriteTokens: 0,
+      thinkingTokens: 0, cost: 0.001, costSource: 'log', sessionId: 'deepseek-session',
+      sourceFile: '/path/to/deepseek.jsonl', device: 'test-device', deviceInstanceId: 'device-123',
+    })
+
+    const json = JSON.parse(exportData(db, 'json'))
+    expect(json[0]).toMatchObject({
+      model: 'deepseek-v4.1-flash',
+      realCost: 0.001,
+      planDraw: 1.506,
+      rateTier: 'peak',
+    })
+
+    const csv = exportData(db, 'csv')
+    expect(csv.split('\n')[0]).toContain('plan_draw,rate_tier,usage_multiplier')
+    expect(csv).toContain(',1.506,peak,1,')
   })
 })
