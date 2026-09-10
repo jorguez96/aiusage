@@ -27,16 +27,19 @@
   $: $dateRange, $selectedDevice, $selectedTool, loadData()
 
   $: sortedModels = [...(data?.models || [])].sort((a, b) => {
-    if (chartMode === 'cost') return b.totalCost - a.totalCost
+    if (chartMode === 'real') return (b.realCost ?? b.totalCost) - (a.realCost ?? a.totalCost)
+    if (chartMode === 'plan') return b.planDraw - a.planDraw
     return b.totalTokens - a.totalTokens
   })
 
   $: maxMetricValue = sortedModels.length
-    ? Math.max(...sortedModels.map(model => chartMode === 'cost' ? model.totalCost : model.totalTokens))
+    ? Math.max(...sortedModels.map(getChartValue))
     : 0
 
   function getChartValue(model) {
-    return chartMode === 'cost' ? model.totalCost : model.totalTokens
+    if (chartMode === 'real') return model.realCost ?? model.totalCost ?? 0
+    if (chartMode === 'plan') return model.planDraw ?? model.totalCost ?? 0
+    return model.totalTokens
   }
 
   function getChartWidth(model) {
@@ -45,7 +48,7 @@
   }
 
   function formatChartValue(model) {
-    return chartMode === 'cost' ? formatCost(model.totalCost) : formatTokens(model.totalTokens)
+    return chartMode === 'tokens' ? formatTokens(model.totalTokens) : formatCost(getChartValue(model))
   }
 
   function formatPercentage(value) {
@@ -102,10 +105,16 @@
         >{$t('models.modeTokens')}</button>
         <button
           class="mode-btn"
-          class:active={chartMode === 'cost'}
-          aria-pressed={chartMode === 'cost'}
-          on:click={() => chartMode = 'cost'}
-        >{$t('models.modeCost')}</button>
+          class:active={chartMode === 'real'}
+          aria-pressed={chartMode === 'real'}
+          on:click={() => chartMode = 'real'}
+        >{$t('models.modeRealCost')}</button>
+        <button
+          class="mode-btn"
+          class:active={chartMode === 'plan'}
+          aria-pressed={chartMode === 'plan'}
+          on:click={() => chartMode = 'plan'}
+        >{$t('models.modePlanDraw')}</button>
       </div>
     </div>
 
@@ -125,6 +134,14 @@
           <div class="model-meta">
             <span class="mono model-name">{model.model}</span>
             <span class="model-provider">{model.gateway || model.provider}</span>
+            {#if model.monthlyLimit != null}
+              <span class="model-plan-meta">{$t('models.planLimit')}: {formatCost(model.monthlyLimit)} · {formatPercentage(model.windowPercentages?.monthly)}</span>
+            {:else}
+              <span class="model-plan-meta">{$t('models.planLimitUnknown')}</span>
+            {/if}
+            {#if !model.usageMultiplierKnown}
+              <span class="model-plan-meta">{$t('models.multiplierUnknown')}</span>
+            {/if}
           </div>
 
           <div class="bar-area">
@@ -157,9 +174,19 @@
 
           <div class="model-stats">
             <span class="stat-item">
-              <span class="stat-label">{$t('models.cost')}</span>
-              <span class="mono stat-value">{formatCost(model.totalCost)}</span>
+              <span class="stat-label">{$t('models.realCost')}</span>
+              <span class="mono stat-value">{formatCost(model.realCost ?? model.totalCost ?? 0)}</span>
             </span>
+            <span class="stat-item">
+              <span class="stat-label">{$t('models.planDraw')}</span>
+              <span class="mono stat-value">{formatCost(model.planDraw ?? model.totalCost ?? 0)}</span>
+            </span>
+            {#if model.monthlyLimit != null}
+              <span class="stat-item">
+              <span class="stat-label">{$t('models.planPercent')}</span>
+              <span class="mono stat-value">{formatPercentage(model.windowPercentages?.monthly)}</span>
+            </span>
+            {/if}
             <span class="stat-item">
               <span class="stat-label">{$t('models.calls')}</span>
               <span class="mono stat-value">{formatNumber(model.callCount)}</span>
@@ -260,6 +287,10 @@
   }
   .model-provider {
     font-size: 0.75rem;
+    color: var(--text-muted);
+  }
+  .model-plan-meta {
+    font-size: 0.6875rem;
     color: var(--text-muted);
   }
 

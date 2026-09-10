@@ -12,6 +12,7 @@
 
   let tooltip = null
   let chartEl = null
+  let chartMode = 'real'
 
   async function loadData() {
     loading = true
@@ -30,12 +31,16 @@
 
   function getMaxCost() {
     if (!data?.data.length) return 0
-    return Math.max(...data.data.map(d => d.cost))
+    return Math.max(...data.data.map(getMetric))
   }
 
   function getTotalCost() {
     if (!data?.data.length) return 0
-    return data.data.reduce((sum, d) => sum + d.cost, 0)
+    return data.data.reduce((sum, d) => sum + getMetric(d), 0)
+  }
+
+  function getMetric(day) {
+    return chartMode === 'plan' ? (day.planDraw || 0) : (day.realCost ?? day.cost ?? 0)
   }
 
   function getTopEntries(obj, limit) {
@@ -67,7 +72,8 @@
       x: e.clientX - rect.left,
       y: e.clientY - rect.top,
       date: day.date,
-      cost: day.cost,
+      realCost: day.realCost ?? day.cost ?? 0,
+      planDraw: day.planDraw ?? day.cost ?? 0,
     }
   }
 
@@ -104,13 +110,25 @@
   {@const max = getMaxCost()}
   {@const ticks = niceScale(max)}
   {@const scaleMax = ticks.length ? ticks[ticks.length - 1] : max}
-  <div class="hero-card">
-    <span class="hero-label">{$t('cost.totalCost')}</span>
-    <span class="hero-value">{formatCost(getTotalCost())}</span>
+  <div class="hero-cards">
+    <div class="hero-card">
+      <span class="hero-label">{$t('cost.realCost')}</span>
+      <span class="hero-value">{formatCost(data.realCost ?? getTotalCost())}</span>
+    </div>
+    <div class="hero-card">
+      <span class="hero-label">{$t('cost.planDraw')}</span>
+      <span class="hero-value">{formatCost(data.planDraw ?? getTotalCost())}</span>
+    </div>
   </div>
 
   <div class="card chart-section">
-    <div class="section-title">{$t('cost.chartTitle')}</div>
+    <div class="chart-header">
+      <div class="section-title">{chartMode === 'plan' ? $t('cost.chartPlanDraw') : $t('cost.chartRealCost')}</div>
+      <div class="mode-toggle" role="group" aria-label={$t('cost.chartTitle')}>
+        <button class="mode-btn" class:active={chartMode === 'real'} aria-pressed={chartMode === 'real'} on:click={() => chartMode = 'real'}>{$t('cost.realCost')}</button>
+        <button class="mode-btn" class:active={chartMode === 'plan'} aria-pressed={chartMode === 'plan'} on:click={() => chartMode = 'plan'}>{$t('cost.planDraw')}</button>
+      </div>
+    </div>
     <!-- svelte-ignore a11y-no-static-element-interactions -->
     <div class="chart-area" bind:this={chartEl} on:mouseleave={hideTooltip}>
       <div class="y-axis">
@@ -132,7 +150,7 @@
           >
             <div
               class="bar"
-              style="height: {scaleMax > 0 ? (day.cost / scaleMax) * 200 : 0}px"
+              style="height: {scaleMax > 0 ? (getMetric(day) / scaleMax) * 200 : 0}px"
             ></div>
             <div class="label">{day.date.slice(5)}</div>
           </div>
@@ -141,7 +159,8 @@
       {#if tooltip}
         <div class="tooltip" style="left:{tooltip.x}px;top:{tooltip.y}px">
           <div class="tooltip-date">{tooltip.date}</div>
-          <div class="tooltip-cost mono">{formatCost(tooltip.cost)}</div>
+          <div class="tooltip-cost mono">{$t('cost.realCost')}: {formatCost(tooltip.realCost)}</div>
+          <div class="tooltip-cost mono">{$t('cost.planDraw')}: {formatCost(tooltip.planDraw)}</div>
         </div>
       {/if}
     </div>
@@ -150,19 +169,23 @@
   <div class="grid-2">
     <div class="card">
       <div class="section-title">{$t('cost.byTool')}</div>
-      {#each getTopEntries(data.byTool, 10) as [tool, cost]}
+      <div class="breakdown-head"><span></span><span>{$t('cost.realCost')}</span><span>{$t('cost.planDraw')}</span></div>
+      {#each getTopEntries(data.byToolRealCost ?? data.byTool, 10) as [tool, realCost]}
         <div class="breakdown-row">
           <span class="mono">{tool}</span>
-          <span class="mono accent">{formatCost(cost)}</span>
+          <span class="mono accent">{formatCost(realCost)}</span>
+          <span class="mono">{formatCost((data.byToolPlanDraw ?? data.byTool)[tool] ?? realCost)}</span>
         </div>
       {/each}
     </div>
     <div class="card">
       <div class="section-title">{$t('cost.byModel')}</div>
-      {#each getTopEntries(data.byModel, 10) as [model, cost]}
+      <div class="breakdown-head"><span></span><span>{$t('cost.realCost')}</span><span>{$t('cost.planDraw')}</span></div>
+      {#each getTopEntries(data.byModelRealCost ?? data.byModel, 10) as [model, realCost]}
         <div class="breakdown-row">
           <span class="mono">{model}</span>
-          <span class="mono accent">{formatCost(cost)}</span>
+          <span class="mono accent">{formatCost(realCost)}</span>
+          <span class="mono">{formatCost((data.byModelPlanDraw ?? data.byModel)[model] ?? realCost)}</span>
         </div>
       {/each}
     </div>
@@ -179,6 +202,13 @@
     padding: 1.25rem 2rem;
     margin-bottom: 1.5rem;
   }
+  .hero-cards {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-bottom: 1.5rem;
+  }
+  .hero-cards .hero-card { margin-bottom: 0; }
   .hero-label {
     font-family: var(--mono);
     font-size: 0.75rem;
@@ -198,6 +228,33 @@
     margin-bottom: 1.5rem;
     padding-bottom: 1.5rem;
   }
+  .chart-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 0.75rem;
+  }
+  .chart-header .section-title { margin-bottom: 0; }
+  .mode-toggle {
+    display: flex;
+    gap: 2px;
+    background: var(--raised);
+    border-radius: 6px;
+    padding: 2px;
+  }
+  .mode-btn {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.22rem 0.65rem;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+  .mode-btn.active { background: var(--surface); color: var(--text); }
 
   /* ── Chart with Y-axis ────────────────────────────────────── */
   .chart-area {
@@ -303,8 +360,9 @@
     gap: 1rem;
   }
   .breakdown-row {
-    display: flex;
-    justify-content: space-between;
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: 0.75rem;
     padding: 0.45rem 0;
     border-bottom: 1px solid var(--border-subtle);
     font-size: 0.8rem;
@@ -312,6 +370,16 @@
   }
   .breakdown-row:last-child {
     border-bottom: none;
+  }
+  .breakdown-head {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: 0.75rem;
+    padding: 0.35rem 0;
+    color: var(--text-muted);
+    font-size: 0.6875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
   }
 
   @keyframes fade {

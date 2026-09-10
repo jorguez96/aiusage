@@ -54,12 +54,13 @@ program
       console.log(`设备：全部（${summary.deviceCount} 台设备在线）`)
     }
     console.log(`Total Tokens: ${summary.totalTokens.toLocaleString()}`)
-    console.log(`Total Cost:   $${summary.totalCost.toFixed(4)}`)
+    console.log(`Real Cost:    $${summary.realCost.toFixed(4)}`)
+    console.log(`Plan Draw:    $${summary.planDraw.toFixed(4)}`)
     console.log(`Records:      ${summary.recordCount}`)
     if (Object.keys(summary.byTool).length > 0) {
       console.log('\nBy Tool:')
       for (const [tool, stats] of Object.entries(summary.byTool)) {
-        console.log(`  ${tool}: ${stats.tokens.toLocaleString()} tokens, $${stats.cost.toFixed(4)}`)
+        console.log(`  ${tool}: ${stats.tokens.toLocaleString()} tokens, real $${stats.realCost.toFixed(4)}, plan $${stats.planDraw.toFixed(4)}`)
       }
     }
     if (summary.topToolCalls.length > 0) {
@@ -95,12 +96,13 @@ program
       console.log(`设备：全部（${summary.deviceCount} 台设备在线）`)
     }
     console.log(`Total Tokens: ${summary.totalTokens.toLocaleString()}`)
-    console.log(`Total Cost:   $${summary.totalCost.toFixed(4)}`)
+    console.log(`Real Cost:    $${summary.realCost.toFixed(4)}`)
+    console.log(`Plan Draw:    $${summary.planDraw.toFixed(4)}`)
     console.log(`Records:      ${summary.recordCount}`)
     if (Object.keys(summary.byTool).length > 0) {
       console.log('\nBy Tool:')
       for (const [tool, stats] of Object.entries(summary.byTool)) {
-        console.log(`  ${tool}: ${stats.tokens.toLocaleString()} tokens, $${stats.cost.toFixed(4)}`)
+        console.log(`  ${tool}: ${stats.tokens.toLocaleString()} tokens, real $${stats.realCost.toFixed(4)}, plan $${stats.planDraw.toFixed(4)}`)
       }
     }
     db.close()

@@ -95,7 +95,8 @@
           <th>{$t('sessions.toolCalls')}</th>
           <th>{$t('sessions.input')}</th>
           <th>{$t('sessions.output')}</th>
-          <th>{$t('sessions.cost')}</th>
+          <th>{$t('sessions.realCost')}</th>
+          <th>{$t('sessions.planDraw')}</th>
         </tr>
       </thead>
       <tbody>
@@ -110,7 +111,8 @@
             <td class="mono">{session.toolCallCount ?? 0}</td>
             <td class="mono green">{formatTokens(session.inputTokens)}</td>
             <td class="mono blue">{formatTokens(session.outputTokens)}</td>
-            <td class="mono accent">{formatCost(session.cost)}</td>
+            <td class="mono accent">{formatCost(session.realCost ?? session.cost ?? 0)}</td>
+            <td class="mono">{formatCost(session.planDraw ?? session.cost ?? 0)}</td>
           </tr>
         {/each}
       </tbody>

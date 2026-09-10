@@ -4,7 +4,7 @@ import { hostname, platform, tmpdir } from 'node:os'
 import { randomBytes } from 'node:crypto'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import type Database from 'better-sqlite3'
-import { calculateCostForPrice, removePriceOverride, inferProvider, normalizeQoderModel, resolveExchangeRate, fetchExchangeRate, TOOLS, type PriceEntry } from '@aiusage/core'
+import { calculateCostForPrice, calculateUsageConsumption, removePriceOverride, inferProvider, normalizeQoderModel, resolveExchangeRate, fetchExchangeRate, TOOLS, type PriceEntry } from '@aiusage/core'
 import { AIUSAGE_DIR, buildConsentConfig, loadConfig, saveConfig, loadCredential } from '../config.js'
 import type { Config, SyncConfig } from '../config.js'
 import { setSyncConsent } from '../init.js'
@@ -430,6 +430,195 @@ function getDeviceFilter(
   }
 }
 
+interface UsageQueryRow {
+  tool: string
+  model: string
+  gateway: string | null
+  cost: number
+  ts: number
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  thinkingTokens: number
+  sessionId: string
+  sourceFile: string
+  cwd: string
+}
+
+function usageDateKey(value: unknown): string | null {
+  const timestamp = typeof value === 'number' || (typeof value === 'string' && /^\d+(?:\.\d+)?$/.test(value))
+    ? Number(value)
+    : new Date(String(value)).getTime()
+  if (!Number.isFinite(timestamp)) return null
+  return new Date(timestamp).toISOString().slice(0, 10)
+}
+
+function queryUsageRows(
+  db: Database.Database,
+  dr: { where: string; params: Record<string, unknown> },
+  df: DeviceFilter,
+  tf: { where: string; params: Record<string, unknown> },
+): UsageQueryRow[] {
+  const localSelect = `
+    SELECT tool, model, gateway, cost, ts,
+           input_tokens AS inputTokens,
+           output_tokens AS outputTokens,
+           cache_read_tokens AS cacheReadTokens,
+           cache_write_tokens AS cacheWriteTokens,
+           thinking_tokens AS thinkingTokens,
+           session_id AS sessionId,
+           source_file AS sourceFile,
+           cwd
+    FROM records
+    WHERE 1=1 ${dr.where} ${df.localOnly ? LOCAL_ONLY_FILTER : ''} ${tf.where}`
+  const syncedSelect = `
+    SELECT tool, model, gateway, cost, ts,
+           input_tokens AS inputTokens,
+           output_tokens AS outputTokens,
+           cache_read_tokens AS cacheReadTokens,
+           cache_write_tokens AS cacheWriteTokens,
+           thinking_tokens AS thinkingTokens,
+           session_key AS sessionId,
+           source_file AS sourceFile,
+           cwd
+    FROM synced_records
+    WHERE 1=1 ${dr.where} ${tf.where}`
+
+  let sql: string
+  if (df.useUnion) {
+    // The device predicate must be applied before the union's second SELECT.
+    sql = `${localSelect} UNION ALL ${syncedSelect.replace('WHERE 1=1', 'WHERE 1=1 AND device_instance_id != @currentDeviceId')}`
+  } else if (df.where) {
+    sql = `${syncedSelect} ${df.where}`
+  } else {
+    sql = localSelect
+  }
+
+  return db.prepare(sql).all({ ...dr.params, ...df.params, ...tf.params }) as UsageQueryRow[]
+}
+
+interface UsageAggregate {
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  thinkingTokens: number
+  totalTokens: number
+  totalCost: number
+  realCost: number
+  planDraw: number
+  activeDays: number
+  totalSessions: number
+  byTool: Record<string, { tokens: number; cost: number; realCost: number; planDraw: number }>
+}
+
+function aggregateUsageRows(rows: UsageQueryRow[]): UsageAggregate {
+  const totals = {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    thinkingTokens: 0,
+    totalTokens: 0,
+    realCost: 0,
+    planDraw: 0,
+  }
+  const days = new Set<string>()
+  const sessions = new Set<string>()
+  const byTool: UsageAggregate['byTool'] = {}
+
+  for (const row of rows) {
+    const inputTokens = Number(row.inputTokens) || 0
+    const outputTokens = Number(row.outputTokens) || 0
+    const cacheReadTokens = Number(row.cacheReadTokens) || 0
+    const cacheWriteTokens = Number(row.cacheWriteTokens) || 0
+    const thinkingTokens = Number(row.thinkingTokens) || 0
+    const totalTokens = inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens + thinkingTokens
+    const usage = calculateUsageConsumption(Number(row.cost) || 0, row.gateway, row.model)
+
+    totals.inputTokens += inputTokens
+    totals.outputTokens += outputTokens
+    totals.cacheReadTokens += cacheReadTokens
+    totals.cacheWriteTokens += cacheWriteTokens
+    totals.thinkingTokens += thinkingTokens
+    totals.totalTokens += totalTokens
+    totals.realCost += usage.realCost
+    totals.planDraw += usage.planDraw
+    const day = usageDateKey(row.ts)
+    if (day) days.add(day)
+    sessions.add(row.sessionId)
+
+    const tool = byTool[row.tool] ?? { tokens: 0, cost: 0, realCost: 0, planDraw: 0 }
+    tool.tokens += totalTokens
+    tool.cost += usage.realCost
+    tool.realCost += usage.realCost
+    tool.planDraw += usage.planDraw
+    byTool[row.tool] = tool
+  }
+
+  return {
+    ...totals,
+    totalCost: totals.realCost,
+    activeDays: days.size,
+    totalSessions: sessions.size,
+    byTool,
+  }
+}
+
+function aggregateCostRows(rows: UsageQueryRow[]): {
+  data: Array<{ date: string; cost: number; realCost: number; planDraw: number }>
+  byTool: Record<string, number>
+  byToolRealCost: Record<string, number>
+  byToolPlanDraw: Record<string, number>
+  byModel: Record<string, number>
+  byModelRealCost: Record<string, number>
+  byModelPlanDraw: Record<string, number>
+  realCost: number
+  planDraw: number
+} {
+  const daily = new Map<string, { cost: number; realCost: number; planDraw: number }>()
+  const byToolRealCost: Record<string, number> = {}
+  const byToolPlanDraw: Record<string, number> = {}
+  const byModelRealCost: Record<string, number> = {}
+  const byModelPlanDraw: Record<string, number> = {}
+  let realCost = 0
+  let planDraw = 0
+
+  for (const row of rows) {
+    const usage = calculateUsageConsumption(Number(row.cost) || 0, row.gateway, row.model)
+    const date = usageDateKey(row.ts)
+    if (!date) continue
+    const day = daily.get(date) ?? { cost: 0, realCost: 0, planDraw: 0 }
+    day.cost += usage.realCost
+    day.realCost += usage.realCost
+    day.planDraw += usage.planDraw
+    daily.set(date, day)
+    byToolRealCost[row.tool] = (byToolRealCost[row.tool] ?? 0) + usage.realCost
+    byToolPlanDraw[row.tool] = (byToolPlanDraw[row.tool] ?? 0) + usage.planDraw
+    byModelRealCost[row.model] = (byModelRealCost[row.model] ?? 0) + usage.realCost
+    byModelPlanDraw[row.model] = (byModelPlanDraw[row.model] ?? 0) + usage.planDraw
+    realCost += usage.realCost
+    planDraw += usage.planDraw
+  }
+
+  const data = [...daily.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, values]) => ({ date, ...values }))
+
+  return {
+    data,
+    byTool: byToolRealCost,
+    byToolRealCost,
+    byToolPlanDraw,
+    byModel: byModelRealCost,
+    byModelRealCost,
+    byModelPlanDraw,
+    realCost,
+    planDraw,
+  }
+}
+
 export function createApiServer(db: Database.Database, options?: ApiServerOptions): http.Server {
   const cfg = loadConfig()
   let weekStart: 0 | 1 = (cfg?.weekStart ?? 1) as 0 | 1
@@ -606,99 +795,9 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
         const tool = url.searchParams.get('tool')
         const tf = getToolFilter(tool)
 
-        let totals: any
-        let byToolRows: any[]
-
-        if (df.useUnion) {
-          // All devices: UNION records + synced_records (excluding current device's synced copy)
-          const unionSql = `
-            SELECT input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, thinking_tokens, cost, ts, session_id
-            FROM records WHERE 1=1 ${dr.where} ${df.localOnly ? LOCAL_ONLY_FILTER : ''} ${tf.where}
-            UNION ALL
-            SELECT input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, thinking_tokens, cost, ts, session_key AS session_id
-            FROM synced_records WHERE device_instance_id != @currentDeviceId ${dr.where} ${tf.where}
-          `
-          totals = db.prepare(`
-            SELECT
-              COALESCE(SUM(input_tokens), 0) AS inputTokens,
-              COALESCE(SUM(output_tokens), 0) AS outputTokens,
-              COALESCE(SUM(cache_read_tokens), 0) AS cacheReadTokens,
-              COALESCE(SUM(cache_write_tokens), 0) AS cacheWriteTokens,
-              COALESCE(SUM(thinking_tokens), 0) AS thinkingTokens,
-              COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens + thinking_tokens), 0) AS totalTokens,
-              COALESCE(SUM(cost), 0) AS totalCost,
-              COUNT(DISTINCT strftime('%Y-%m-%d', ts/1000, 'unixepoch')) AS activeDays,
-              COUNT(DISTINCT session_id) AS totalSessions
-            FROM (${unionSql})
-          `).get({ ...dr.params, ...df.params, ...tf.params }) as any
-
-          byToolRows = db.prepare(`
-            SELECT tool, SUM(tokens) AS tokens, SUM(cost) AS cost FROM (
-              SELECT tool,
-                     SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens + thinking_tokens) AS tokens,
-                     SUM(cost) AS cost
-              FROM records WHERE 1=1 ${dr.where} ${df.localOnly ? LOCAL_ONLY_FILTER : ''} ${tf.where}
-              GROUP BY tool
-              UNION ALL
-              SELECT tool,
-                     SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens + thinking_tokens) AS tokens,
-                     SUM(cost) AS cost
-              FROM synced_records WHERE device_instance_id != @currentDeviceId ${dr.where} ${tf.where}
-              GROUP BY tool
-            ) GROUP BY tool ORDER BY cost DESC
-          `).all({ ...dr.params, ...df.params, ...tf.params }) as any[]
-        } else if (df.where) {
-          // Specific other device: query synced_records only
-          totals = db.prepare(`
-            SELECT
-              COALESCE(SUM(input_tokens), 0) AS inputTokens,
-              COALESCE(SUM(output_tokens), 0) AS outputTokens,
-              COALESCE(SUM(cache_read_tokens), 0) AS cacheReadTokens,
-              COALESCE(SUM(cache_write_tokens), 0) AS cacheWriteTokens,
-              COALESCE(SUM(thinking_tokens), 0) AS thinkingTokens,
-              COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens + thinking_tokens), 0) AS totalTokens,
-              COALESCE(SUM(cost), 0) AS totalCost,
-              COUNT(DISTINCT strftime('%Y-%m-%d', ts/1000, 'unixepoch')) AS activeDays,
-              COUNT(DISTINCT session_key) AS totalSessions
-            FROM synced_records WHERE 1=1 ${df.where} ${dr.where} ${tf.where}
-          `).get({ ...dr.params, ...df.params, ...tf.params }) as any
-
-          byToolRows = db.prepare(`
-            SELECT tool,
-                   SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens + thinking_tokens) AS tokens,
-                   SUM(cost) AS cost
-            FROM synced_records WHERE 1=1 ${df.where} ${dr.where} ${tf.where}
-            GROUP BY tool ORDER BY cost DESC
-          `).all({ ...dr.params, ...df.params, ...tf.params }) as any[]
-        } else {
-          // Current device or legacy: query records only
-          totals = db.prepare(`
-            SELECT
-              COALESCE(SUM(input_tokens), 0) AS inputTokens,
-              COALESCE(SUM(output_tokens), 0) AS outputTokens,
-              COALESCE(SUM(cache_read_tokens), 0) AS cacheReadTokens,
-              COALESCE(SUM(cache_write_tokens), 0) AS cacheWriteTokens,
-              COALESCE(SUM(thinking_tokens), 0) AS thinkingTokens,
-              COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens + thinking_tokens), 0) AS totalTokens,
-              COALESCE(SUM(cost), 0) AS totalCost,
-              COUNT(DISTINCT strftime('%Y-%m-%d', ts/1000, 'unixepoch')) AS activeDays,
-              COUNT(DISTINCT session_id) AS totalSessions
-            FROM records WHERE 1=1 ${dr.where} ${df.localOnly ? LOCAL_ONLY_FILTER : ''} ${tf.where}
-          `).get({ ...dr.params, ...tf.params }) as any
-
-          byToolRows = db.prepare(`
-            SELECT tool,
-                   SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens + thinking_tokens) AS tokens,
-                   SUM(cost) AS cost
-            FROM records WHERE 1=1 ${dr.where} ${df.localOnly ? LOCAL_ONLY_FILTER : ''} ${tf.where}
-            GROUP BY tool ORDER BY cost DESC
-          `).all({ ...dr.params, ...tf.params }) as any[]
-        }
-
-        const byTool: Record<string, { tokens: number; cost: number }> = {}
-        for (const row of byToolRows) {
-          byTool[row.tool] = { tokens: row.tokens, cost: row.cost }
-        }
+        const usage = aggregateUsageRows(queryUsageRows(db, dr, df, tf))
+        const totals = usage
+        const byTool = usage.byTool
 
         // LEFT JOIN + COALESCE so orphan tool calls (record_id IS NULL) are still
         // counted. Orphan calls have no records row; for device filtering we treat
@@ -753,6 +852,8 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
           thinkingTokens: totals.thinkingTokens,
           totalTokens: totals.totalTokens,
           totalCost: totals.totalCost,
+          realCost: totals.realCost,
+          planDraw: totals.planDraw,
           activeDays: totals.activeDays,
           totalSessions: totals.totalSessions,
           byTool,
@@ -825,84 +926,8 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
         const tool = url.searchParams.get('tool')
         const tf = getToolFilter(tool)
 
-        let daily: any[]
-        let byToolRows: any[]
-        let byModelRows: any[]
-
-        if (df.useUnion) {
-          daily = db.prepare(`
-            SELECT strftime('%Y-%m-%d', ts/1000, 'unixepoch') AS date,
-                   SUM(cost) AS cost
-            FROM (
-              SELECT cost, ts FROM records WHERE 1=1 ${dr.where} ${df.localOnly ? LOCAL_ONLY_FILTER : ''} ${tf.where}
-              UNION ALL
-              SELECT cost, ts FROM synced_records WHERE device_instance_id != @currentDeviceId ${dr.where} ${tf.where}
-            )
-            GROUP BY date ORDER BY date
-          `).all({ ...dr.params, currentDeviceId: df.params.currentDeviceId, ...tf.params }) as any[]
-
-          byToolRows = db.prepare(`
-            SELECT tool, SUM(cost) AS cost FROM (
-              SELECT tool, SUM(cost) AS cost FROM records WHERE 1=1 ${dr.where} ${df.localOnly ? LOCAL_ONLY_FILTER : ''} ${tf.where} GROUP BY tool
-              UNION ALL
-              SELECT tool, SUM(cost) AS cost FROM synced_records WHERE device_instance_id != @currentDeviceId ${dr.where} ${tf.where} GROUP BY tool
-            ) GROUP BY tool ORDER BY cost DESC
-          `).all({ ...dr.params, currentDeviceId: df.params.currentDeviceId, ...tf.params }) as any[]
-
-          byModelRows = db.prepare(`
-            SELECT model, SUM(cost) AS cost FROM (
-              SELECT model, SUM(cost) AS cost FROM records WHERE 1=1 ${dr.where} ${df.localOnly ? LOCAL_ONLY_FILTER : ''} ${tf.where} GROUP BY model
-              UNION ALL
-              SELECT model, SUM(cost) AS cost FROM synced_records WHERE device_instance_id != @currentDeviceId ${dr.where} ${tf.where} GROUP BY model
-            ) GROUP BY model ORDER BY cost DESC
-          `).all({ ...dr.params, currentDeviceId: df.params.currentDeviceId, ...tf.params }) as any[]
-        } else if (device && device !== options?.currentDeviceInstanceId) {
-          daily = db.prepare(`
-            SELECT strftime('%Y-%m-%d', ts/1000, 'unixepoch') AS date,
-                   SUM(cost) AS cost
-            FROM synced_records WHERE 1=1 ${df.where} ${dr.where} ${tf.where}
-            GROUP BY date ORDER BY date
-          `).all({ ...df.params, ...dr.params, ...tf.params }) as any[]
-
-          byToolRows = db.prepare(`
-            SELECT tool, SUM(cost) AS cost
-            FROM synced_records WHERE 1=1 ${df.where} ${dr.where} ${tf.where}
-            GROUP BY tool ORDER BY cost DESC
-          `).all({ ...df.params, ...dr.params, ...tf.params }) as any[]
-
-          byModelRows = db.prepare(`
-            SELECT model, SUM(cost) AS cost
-            FROM synced_records WHERE 1=1 ${df.where} ${dr.where} ${tf.where}
-            GROUP BY model ORDER BY cost DESC
-          `).all({ ...df.params, ...dr.params, ...tf.params }) as any[]
-        } else {
-          daily = db.prepare(`
-            SELECT strftime('%Y-%m-%d', ts/1000, 'unixepoch') AS date,
-                   SUM(cost) AS cost
-            FROM records WHERE 1=1 ${dr.where} ${df.localOnly ? LOCAL_ONLY_FILTER : ''} ${tf.where}
-            GROUP BY date ORDER BY date
-          `).all({ ...dr.params, ...tf.params }) as any[]
-
-          byToolRows = db.prepare(`
-            SELECT tool, SUM(cost) AS cost
-            FROM records WHERE 1=1 ${dr.where} ${df.localOnly ? LOCAL_ONLY_FILTER : ''} ${tf.where}
-            GROUP BY tool ORDER BY cost DESC
-          `).all({ ...dr.params, ...tf.params }) as any[]
-
-          byModelRows = db.prepare(`
-            SELECT model, SUM(cost) AS cost
-            FROM records WHERE 1=1 ${dr.where} ${df.localOnly ? LOCAL_ONLY_FILTER : ''} ${tf.where}
-            GROUP BY model ORDER BY cost DESC
-          `).all({ ...dr.params, ...tf.params }) as any[]
-        }
-
-        const byTool: Record<string, number> = {}
-        for (const r of byToolRows) byTool[r.tool] = r.cost
-
-        const byModel: Record<string, number> = {}
-        for (const r of byModelRows) byModel[r.model] = r.cost
-
-        json(res, { data: daily, byTool, byModel })
+        const costs = aggregateCostRows(queryUsageRows(db, dr, df, tf))
+        json(res, costs)
         return
       }
 
@@ -954,7 +979,6 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
                    SUM(totalTokens) AS totalTokens,
                    SUM(totalCost) AS totalCost
             FROM (${unionSql})
-            WHERE model != 'unknown'
             GROUP BY model, provider, gateway ORDER BY totalTokens DESC
           `).all({ ...dr.params, ...df.params, ...tf.params }) as any[]
           totalTokensAcrossModels = mergedRows.reduce((sum, row) => sum + row.totalTokens, 0)
@@ -970,7 +994,7 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
                    SUM(thinking_tokens) AS thinkingTokens,
                    SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens + thinking_tokens) AS totalTokens,
                    SUM(cost) AS totalCost
-            FROM synced_records WHERE 1=1 AND model != 'unknown' ${df.where} ${dr.where} ${tf.where}
+            FROM synced_records WHERE 1=1 ${df.where} ${dr.where} ${tf.where}
             GROUP BY model, provider, gateway ORDER BY totalTokens DESC
           `).all({ ...df.params, ...dr.params, ...tf.params }) as any[]
           totalTokensAcrossModels = rows.reduce((sum, row) => sum + row.totalTokens, 0)
@@ -985,13 +1009,14 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
                    SUM(thinking_tokens) AS thinkingTokens,
                    SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens + thinking_tokens) AS totalTokens,
                    SUM(cost) AS totalCost
-            FROM records WHERE 1=1 AND model != 'unknown' ${dr.where} ${df.localOnly ? LOCAL_ONLY_FILTER : ''} ${tf.where}
+            FROM records WHERE 1=1 ${dr.where} ${df.localOnly ? LOCAL_ONLY_FILTER : ''} ${tf.where}
             GROUP BY model, provider, gateway ORDER BY totalTokens DESC
           `).all({ ...dr.params, ...tf.params }) as any[]
           totalTokensAcrossModels = rows.reduce((sum, row) => sum + row.totalTokens, 0)
         }
 
         const models = rows.map(r => ({
+          ...calculateUsageConsumption(Number(r.totalCost) || 0, r.gateway, r.model),
           model: r.model,
           provider: r.provider,
           gateway: r.gateway ?? null,
@@ -1133,6 +1158,7 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
         // Records in ascending order
         const records = db.prepare(`
           SELECT id, ts, model,
+                 gateway,
                  input_tokens AS inputTokens,
                  output_tokens AS outputTokens,
                  cache_read_tokens AS cacheReadTokens,
@@ -1143,6 +1169,15 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
           WHERE session_id = @sessionId ${toolClause} ${deviceClause}
           ORDER BY ts ASC
         `).all(filterParams) as any[]
+
+        let sessionRealCost = 0
+        let sessionPlanDraw = 0
+        const recordsWithUsage = records.map(record => {
+          const usage = calculateUsageConsumption(Number(record.cost) || 0, record.gateway, record.model)
+          sessionRealCost += usage.realCost
+          sessionPlanDraw += usage.planDraw
+          return { ...record, ...usage }
+        })
 
         // Tool calls for all records in this session
         const rToolClause = toolParam ? 'AND r.tool = @tool' : ''
@@ -1178,8 +1213,8 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
         const toolCallCount = toolCallRows.length
 
         json(res, {
-          session: { ...meta, toolCallCount, cwd },
-          records: records.map(r => ({
+          session: { ...meta, cost: sessionRealCost, realCost: sessionRealCost, planDraw: sessionPlanDraw, toolCallCount, cwd },
+          records: recordsWithUsage.map(r => ({
             ...r,
             toolCalls: toolCallsByRecord[r.id] ?? [],
           })),
@@ -1236,8 +1271,21 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
           LIMIT @limit OFFSET @offset
         `).all({ ...params, limit: pageSize, offset: (page - 1) * pageSize }) as any[]
 
+        const sessionUsage = new Map<string, { realCost: number; planDraw: number }>()
+        for (const row of queryUsageRows(db, dr, { ...df, useUnion: false }, tf)) {
+          const usage = calculateUsageConsumption(Number(row.cost) || 0, row.gateway, row.model)
+          const totals = sessionUsage.get(row.sessionId) ?? { realCost: 0, planDraw: 0 }
+          totals.realCost += usage.realCost
+          totals.planDraw += usage.planDraw
+          sessionUsage.set(row.sessionId, totals)
+        }
+        const sessionsWithUsage = sessions.map(session => {
+          const usage = sessionUsage.get(session.sessionId) ?? { realCost: Number(session.cost) || 0, planDraw: Number(session.cost) || 0 }
+          return { ...session, cost: usage.realCost, realCost: usage.realCost, planDraw: usage.planDraw }
+        })
+
         json(res, {
-          sessions,
+          sessions: sessionsWithUsage,
           total: totalRow.total,
           page,
           pageSize,
@@ -1276,6 +1324,12 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
           `).all({ ...dr.params, ...tf.params }) as any[]
         }
 
+        const planBySourceFile = new Map<string, number>()
+        for (const usageRow of queryUsageRows(db, dr, { ...df, useUnion: false }, tf)) {
+          const usage = calculateUsageConsumption(Number(usageRow.cost) || 0, usageRow.gateway, usageRow.model)
+          planBySourceFile.set(usageRow.sourceFile, (planBySourceFile.get(usageRow.sourceFile) ?? 0) + usage.planDraw)
+        }
+
         // Build a cwd inference map for Claude Code paths: encoded project dir → cwd.
         // Records without cwd can inherit it from another session in the same project directory.
         const cwdByEncodedDir: Record<string, string> = {}
@@ -1287,7 +1341,7 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
         }
 
         // Aggregate by project
-        const projectMap: Record<string, { sessions: number; tokens: number; cost: number; fullPath: string }> = {}
+        const projectMap: Record<string, { sessions: number; tokens: number; cost: number; planDraw: number; fullPath: string }> = {}
         for (const row of rows) {
           if (!row.source_file) continue
           let effectiveCwd: string = row.cwd || ''
@@ -1297,10 +1351,11 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
           }
           const fromCwd = effectiveCwd ? extractProjectFromCwd(effectiveCwd) : null
           const project = (fromCwd && fromCwd !== 'unknown') ? fromCwd : extractProject(row.source_file)
-          if (!projectMap[project]) projectMap[project] = { sessions: 0, tokens: 0, cost: 0, fullPath: effectiveCwd || row.source_file }
+          if (!projectMap[project]) projectMap[project] = { sessions: 0, tokens: 0, cost: 0, planDraw: 0, fullPath: effectiveCwd || row.source_file }
           projectMap[project].sessions += row.sessionCount
           projectMap[project].tokens += row.totalTokens
           projectMap[project].cost += row.cost
+          projectMap[project].planDraw += planBySourceFile.get(row.source_file) ?? row.cost
         }
 
         const totalTokens = Object.values(projectMap).reduce((s, p) => s + p.tokens, 0) || 1
@@ -1310,6 +1365,8 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
             sessions: data.sessions,
             tokens: data.tokens,
             cost: data.cost,
+            realCost: data.cost,
+            planDraw: data.planDraw,
             percentage: Math.round((data.tokens / totalTokens) * 1000) / 10,
             fullPath: data.fullPath,
           }))
