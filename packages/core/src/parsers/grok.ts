@@ -16,6 +16,8 @@ interface ActiveTurn {
   context: ParseContext
   usage: Usage | null
   loggedCost: number | null
+  createdDuringReplay: boolean
+  replacementLineOffset?: number
 }
 
 interface Usage {
@@ -109,6 +111,9 @@ export class GrokParser implements Parser {
     let completed: ParseResult | null = null
     if (update?.sessionUpdate === 'user_message_chunk') {
       if (this.activeTurn) completed = this.buildResult(this.activeTurn)
+      const provisionalFallback = this.fallback?.createdDuringReplay && this.fallback.usage == null
+        ? this.fallback
+        : null
       this.fallback = null
       this.activeTurn = {
         baselineTotal: this.lastTotal ?? 0,
@@ -121,6 +126,8 @@ export class GrokParser implements Parser {
         context,
         usage: null,
         loggedCost: null,
+        createdDuringReplay: false,
+        replacementLineOffset: provisionalFallback?.lineOffset,
       }
     }
 
@@ -235,7 +242,14 @@ export class GrokParser implements Parser {
       deviceInstanceId: turn.context.deviceInstanceId,
       platform: turn.context.platform,
     }
-    return { record, toolCalls: [] }
+    const replacementRecordId = turn.replacementLineOffset == null
+      ? undefined
+      : generateRecordId(turn.context.deviceInstanceId, turn.context.sourceFile, turn.replacementLineOffset)
+    return {
+      record,
+      toolCalls: [],
+      ...(replacementRecordId && replacementRecordId !== record.id ? { replacementRecordId } : {}),
+    }
   }
 
   private reset(): void {
@@ -259,6 +273,7 @@ export class GrokParser implements Parser {
       context,
       usage: null,
       loggedCost: null,
+      createdDuringReplay: context.isReplay === true,
     }
     return this.fallback
   }

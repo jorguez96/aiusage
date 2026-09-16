@@ -119,6 +119,7 @@ describe('WatermarkManager', () => {
         grok: { '/old/updates.jsonl': { offset: 100, size: 100, mtime: 1 } },
         'claude-code': { '/claude/session.jsonl': { offset: 200, size: 200, mtime: 2 } },
       },
+      grokParserVersion: 1,
     }), 'utf-8')
 
     const wm = new WatermarkManager(watermarkPath)
@@ -127,7 +128,7 @@ describe('WatermarkManager', () => {
 
     wm.save()
     const saved = JSON.parse(readFileSync(watermarkPath, 'utf-8'))
-    expect(saved.grokParserVersion).toBe(1)
+    expect(saved.grokParserVersion).toBe(2)
   })
 
   it('preserves Grok entries written by the current parser version', () => {
@@ -135,7 +136,7 @@ describe('WatermarkManager', () => {
       files: {
         grok: { '/current/updates.jsonl': { offset: 300, size: 300, mtime: 3 } },
       },
-      grokParserVersion: 1,
+      grokParserVersion: 2,
     }), 'utf-8')
 
     const wm = new WatermarkManager(watermarkPath)

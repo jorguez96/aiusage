@@ -18,6 +18,7 @@ export interface CreateContextOptions {
   deviceInstanceId: string
   platform?: string
   exchangeRate?: number
+  isReplay?: boolean
 }
 
 export class Aggregator {

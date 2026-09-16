@@ -129,11 +129,15 @@ export interface ParseContext {
   deviceInstanceId: string
   platform?: string                    // 'win32' | 'darwin' | 'linux'
   exchangeRate?: number               // CNY→USD rate for cost calculation
+  /** True when the parser is replaying state from an earlier parse. */
+  isReplay?: boolean
 }
 
 export interface ParseResult {
   record: StatsRecord | null
   toolCalls: ToolCallRecord[]
+  /** Optional prior record id to replace when a provisional parse is enriched. */
+  replacementRecordId?: string
 }
 
 export interface Parser {
