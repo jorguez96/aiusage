@@ -6,6 +6,8 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 
 - OpenCode Go plan accounting is centralized in `packages/core/src/plan-usage.ts`; keep its `(gateway, model)` boundary intact when adding consumers or refreshing the card snapshot.
 
+- Grok file watermarks are invalidated by `CURRENT_GROK_PARSER_VERSION` in `packages/cli/src/watermark.ts`; bump it whenever Grok token accounting changes so existing logs are replayed.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.

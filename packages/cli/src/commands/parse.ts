@@ -37,6 +37,27 @@ interface ToolPaths {
   paths: string[]
 }
 
+function insertParsedRecord(
+  db: Database.Database,
+  result: { record: StatsRecord | null; replacementRecordId?: string },
+): void {
+  const record = result.record
+  if (!record) return
+
+  const replacementId = result.replacementRecordId
+  if (replacementId && replacementId !== record.id) {
+    const previous = db.prepare('SELECT line_offset FROM records WHERE id = ?').get(replacementId) as
+      | { line_offset: number }
+      | undefined
+    if (previous) {
+      insertRecord(db, { ...record, id: replacementId, lineOffset: previous.line_offset })
+      return
+    }
+  }
+
+  insertRecord(db, record)
+}
+
 // Re-export for backward compatibility with other modules that import from here
 export { defaultOpenCodeDbPath, defaultHermesDbPath, defaultQoderDbPath, defaultCursorDbPath, defaultKiloDbPath, defaultGooseDbPath, defaultZedDbPath, defaultZcodeDbPath } from '../discovery.js'
 
@@ -511,6 +532,7 @@ export async function runParse(db: Database.Database, filterTool?: string, optio
 
   const watermarkPath = join(AIUSAGE_DIR, 'watermark.json')
   const wm = new WatermarkManager(watermarkPath)
+  const grokParserReset = wm.wasGrokParserReset()
 
   const toolPaths = discoverLogFiles()
   const aggregator = new Aggregator()
@@ -816,6 +838,7 @@ export async function runParse(db: Database.Database, filterTool?: string, optio
               deviceInstanceId,
               platform: devicePlatform,
               exchangeRate,
+              isReplay: true,
             }))
             byteOffset += Buffer.byteLength(line, 'utf-8') + 1
             continue
@@ -830,12 +853,13 @@ export async function runParse(db: Database.Database, filterTool?: string, optio
             deviceInstanceId,
             platform: devicePlatform,
             exchangeRate,
+            isReplay: tool === 'grok' && grokParserReset,
           })
 
           const result = aggregator.parseLine(line, context)
           if (result) {
             if (result.record) {
-              insertRecord(db, result.record)
+              insertParsedRecord(db, result)
               parsedCount++
             }
 
@@ -852,7 +876,7 @@ export async function runParse(db: Database.Database, filterTool?: string, optio
         const orphanResults = aggregator.finalize()
         for (const result of orphanResults) {
           if (result.record) {
-            insertRecord(db, result.record)
+            insertParsedRecord(db, result)
             parsedCount++
           }
           for (const tc of result.toolCalls) {

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Database from 'better-sqlite3'
-import { mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { initializeDatabase } from '../../src/db/index.js'
 
@@ -24,14 +24,17 @@ function update(options: {
   sessionUpdate?: string
   modelId?: string
   timestamp: number
+  method?: string
+  usage?: Record<string, unknown>
 }): Record<string, unknown> {
   return {
-    method: 'session/update',
+    method: options.method ?? 'session/update',
     params: {
       sessionId: options.sessionId,
       update: {
         sessionUpdate: options.sessionUpdate ?? 'agent_message_chunk',
         ...(options.modelId ? { _meta: { modelId: options.modelId } } : {}),
+        ...(options.usage ? { usage: options.usage } : {}),
       },
       _meta: {
         ...(options.totalTokens == null ? {} : { totalTokens: options.totalTokens }),
@@ -42,7 +45,28 @@ function update(options: {
 }
 
 function writeJsonl(filePath: string, rows: Record<string, unknown>[]): void {
-  writeFileSync(filePath, `${rows.map(row => JSON.stringify(row)).join('\n')}\n`)
+  writeFileSync(filePath, jsonl(rows))
+}
+
+function appendJsonl(filePath: string, rows: Record<string, unknown>[]): void {
+  appendFileSync(filePath, jsonl(rows))
+}
+
+function jsonl(rows: Record<string, unknown>[]): string {
+  return `${rows.map(row => JSON.stringify(row)).join('\n')}\n`
+}
+
+function turnUsage(): Record<string, unknown> {
+  return {
+    inputTokens: 485_698,
+    outputTokens: 1_364,
+    cachedReadTokens: 483_584,
+    cacheCreationTokens: 0,
+    reasoningTokens: 1_204,
+    totalTokens: 487_062,
+    costUsdTicks: 864_293_600,
+    modelUsage: { 'grok-4.6-build': { inputTokens: 485_698, outputTokens: 1_364 } },
+  }
 }
 
 describe('runParse with Grok Build data', () => {
@@ -85,6 +109,11 @@ describe('runParse with Grok Build data', () => {
     writeFileSync(join(testDir, '.aiusage', 'config.json'), JSON.stringify({
       sources: { grok: sessionsRoot },
     }))
+
+    const initial = await runParse(cacheDb, 'grok')
+    expect(initial.errors).toEqual([])
+    expect(initial.parsedCount).toBe(3)
+
     writeFileSync(join(testDir, '.aiusage', 'watermark.json'), JSON.stringify({
       files: {
         grok: {
@@ -100,6 +129,7 @@ describe('runParse with Grok Build data', () => {
           },
         },
       },
+      grokParserVersion: 1,
     }))
 
     const first = await runParse(cacheDb, 'grok')
@@ -122,5 +152,210 @@ describe('runParse with Grok Build data', () => {
     expect(second.errors).toEqual([])
     expect(second.parsedCount).toBe(0)
     expect(cacheDb.prepare("SELECT COUNT(*) AS count FROM records WHERE tool = 'grok'").get()).toEqual({ count: 3 })
+  })
+
+  it('replaces a totalTokens fallback with turn usage appended on the next parse', async () => {
+    const sessionsRoot = join(testDir, '.grok', 'sessions')
+    const sessionDir = join(sessionsRoot, '%2Fworkspace%2Fapp', 'session-usage')
+    mkdirSync(sessionDir, { recursive: true })
+    const updatesPath = join(sessionDir, 'updates.jsonl')
+
+    writeJsonl(updatesPath, [
+      update({
+        sessionId: 'session-usage',
+        totalTokens: 1_900,
+        timestamp: 1_700_000_021_000,
+      }),
+    ])
+
+    writeFileSync(join(testDir, '.aiusage', 'config.json'), JSON.stringify({
+      sources: { grok: sessionsRoot },
+    }))
+
+    const first = await runParse(cacheDb, 'grok')
+    expect(first.errors).toEqual([])
+    expect(cacheDb.prepare(`
+      SELECT input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, thinking_tokens
+      FROM records
+      WHERE tool = 'grok'
+    `).all()).toEqual([{
+      input_tokens: 1_900,
+      output_tokens: 0,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
+      thinking_tokens: 0,
+    }])
+    expect(first.parsedCount).toBe(1)
+    const firstId = (cacheDb.prepare("SELECT id FROM records WHERE tool = 'grok'").get() as { id: string }).id
+
+    appendJsonl(updatesPath, [
+      update({
+        sessionId: 'session-usage',
+        sessionUpdate: 'user_message_chunk',
+        modelId: 'grok-4.6',
+        timestamp: 1_700_000_021_500,
+      }),
+    ])
+
+    const intermediate = await runParse(cacheDb, 'grok')
+    expect(intermediate.errors).toEqual([])
+    expect(intermediate.parsedCount).toBe(0)
+    expect(cacheDb.prepare("SELECT COUNT(*) AS count FROM records WHERE tool = 'grok'").get()).toEqual({ count: 1 })
+
+    appendJsonl(updatesPath, [
+      update({
+        sessionId: 'session-usage',
+        method: '_x.ai/session/update',
+        sessionUpdate: 'turn_completed',
+        timestamp: 1_700_000_022_000,
+        usage: turnUsage(),
+      }),
+    ])
+
+    const second = await runParse(cacheDb, 'grok')
+    expect(second.errors).toEqual([])
+    expect(second.parsedCount).toBe(1)
+    expect(cacheDb.prepare(`
+      SELECT id, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+             thinking_tokens, cost, cost_source, model, line_offset
+      FROM records
+      WHERE tool = 'grok'
+    `).all()).toEqual([{
+      id: firstId,
+      input_tokens: 2_114,
+      output_tokens: 1_364,
+      cache_read_tokens: 483_584,
+      cache_write_tokens: 0,
+      thinking_tokens: 1_204,
+      cost: 0.08642936,
+      cost_source: 'log',
+      model: 'grok-4.6',
+      line_offset: 0,
+    }])
+  })
+
+  it('replaces an active totalTokens fallback when usage is the only appended event', async () => {
+    const sessionsRoot = join(testDir, '.grok', 'sessions')
+    const sessionDir = join(sessionsRoot, '%2Fworkspace%2Fapp', 'session-active')
+    mkdirSync(sessionDir, { recursive: true })
+    const updatesPath = join(sessionDir, 'updates.jsonl')
+
+    writeJsonl(updatesPath, [
+      update({
+        sessionId: 'session-active',
+        sessionUpdate: 'user_message_chunk',
+        modelId: 'grok-4.6',
+        timestamp: 1_700_000_030_000,
+      }),
+      update({
+        sessionId: 'session-active',
+        totalTokens: 1_900,
+        timestamp: 1_700_000_031_000,
+      }),
+    ])
+    writeFileSync(join(testDir, '.aiusage', 'config.json'), JSON.stringify({
+      sources: { grok: sessionsRoot },
+    }))
+
+    await runParse(cacheDb, 'grok')
+    const firstId = (cacheDb.prepare("SELECT id FROM records WHERE tool = 'grok'").get() as { id: string }).id
+
+    appendJsonl(updatesPath, [
+      update({
+        sessionId: 'session-active',
+        method: '_x.ai/session/update',
+        sessionUpdate: 'turn_completed',
+        timestamp: 1_700_000_032_000,
+        usage: turnUsage(),
+      }),
+    ])
+
+    const second = await runParse(cacheDb, 'grok')
+    expect(second.errors).toEqual([])
+    expect(second.parsedCount).toBe(1)
+    expect(cacheDb.prepare(`
+      SELECT id, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+             thinking_tokens, cost, cost_source, model
+      FROM records
+      WHERE tool = 'grok'
+    `).all()).toEqual([{
+      id: firstId,
+      input_tokens: 2_114,
+      output_tokens: 1_364,
+      cache_read_tokens: 483_584,
+      cache_write_tokens: 0,
+      thinking_tokens: 1_204,
+      cost: 0.08642936,
+      cost_source: 'log',
+      model: 'grok-4.6',
+    }])
+  })
+
+  it('rebuilds an existing fallback when the Grok parser version resets the watermark', async () => {
+    const sessionsRoot = join(testDir, '.grok', 'sessions')
+    const sessionDir = join(sessionsRoot, '%2Fworkspace%2Fapp', 'session-version-reset')
+    mkdirSync(sessionDir, { recursive: true })
+    const updatesPath = join(sessionDir, 'updates.jsonl')
+    const watermarkPath = join(testDir, '.aiusage', 'watermark.json')
+
+    writeJsonl(updatesPath, [
+      update({
+        sessionId: 'session-version-reset',
+        totalTokens: 1_900,
+        timestamp: 1_700_000_040_000,
+      }),
+    ])
+    writeFileSync(join(testDir, '.aiusage', 'config.json'), JSON.stringify({
+      sources: { grok: sessionsRoot },
+    }))
+
+    await runParse(cacheDb, 'grok')
+    const firstId = (cacheDb.prepare("SELECT id FROM records WHERE tool = 'grok'").get() as { id: string }).id
+
+    appendJsonl(updatesPath, [
+      update({
+        sessionId: 'session-version-reset',
+        sessionUpdate: 'user_message_chunk',
+        modelId: 'grok-4.6',
+        timestamp: 1_700_000_040_500,
+      }),
+      update({
+        sessionId: 'session-version-reset',
+        method: '_x.ai/session/update',
+        sessionUpdate: 'turn_completed',
+        timestamp: 1_700_000_041_000,
+        usage: turnUsage(),
+      }),
+    ])
+
+    const stat = statSync(updatesPath)
+    writeFileSync(watermarkPath, JSON.stringify({
+      files: {
+        grok: {
+          [updatesPath]: { offset: stat.size, size: stat.size, mtime: stat.mtimeMs },
+        },
+      },
+      grokParserVersion: 1,
+    }))
+
+    const rebuilt = await runParse(cacheDb, 'grok')
+    expect(rebuilt.errors).toEqual([])
+    expect(rebuilt.parsedCount).toBe(1)
+    expect(cacheDb.prepare(`
+      SELECT id, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+             thinking_tokens, cost, cost_source, model
+      FROM records
+      WHERE tool = 'grok'
+    `).all()).toEqual([{
+      id: firstId,
+      input_tokens: 2_114,
+      output_tokens: 1_364,
+      cache_read_tokens: 483_584,
+      cache_write_tokens: 0,
+      thinking_tokens: 1_204,
+      cost: 0.08642936,
+      cost_source: 'log',
+      model: 'grok-4.6',
+    }])
   })
 })

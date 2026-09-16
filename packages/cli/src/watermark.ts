@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import type { Tool } from '@aiusage/core'
 
-const CURRENT_GROK_PARSER_VERSION = 1
+const CURRENT_GROK_PARSER_VERSION = 2
 
 export interface WatermarkEntry {
   offset: number
@@ -98,6 +98,7 @@ function defaultFileData(): FileWatermarkData {
 export class WatermarkManager {
   private data: WatermarkState
   private path: string
+  private grokParserReset = false
 
   constructor(path: string) {
     this.path = path
@@ -136,6 +137,7 @@ export class WatermarkManager {
       if ((state.grokParserVersion ?? 0) < CURRENT_GROK_PARSER_VERSION) {
         state.files.grok = {}
         state.grokParserVersion = CURRENT_GROK_PARSER_VERSION
+        this.grokParserReset = true
       }
       return state
     } catch {
@@ -156,6 +158,10 @@ export class WatermarkManager {
       this.data.files[tool] = {}
     }
     this.data.files[tool][filePath] = entry
+  }
+
+  wasGrokParserReset(): boolean {
+    return this.grokParserReset
   }
 
   cleanup(existingFiles: string[]): void {
