@@ -129,6 +129,11 @@ function extractSessionId(filePath: string, tool: Tool): string {
     if (rolloutMatch) return rolloutMatch[1]
     return filename.replace(/\.jsonl$/, '').replace(/\.json$/, '') || 'unknown'
   }
+  if (tool === 'gemini') {
+    // ~/.gemini/tmp/<project>/chats/session-<ts>-<id>.jsonl → filename
+    const filename = filePath.split('/').pop() ?? ''
+    return filename.replace(/\.jsonl$/, '').replace(/\.json$/, '') || 'unknown'
+  }
   return 'unknown'
 }
 
@@ -790,6 +795,55 @@ export async function runParse(db: Database.Database, filterTool?: string, optio
             }
             insertRecord(db, record)
             parsedCount++
+          }
+          wm.setEntry(tool, filePath, {
+            offset: stat.size,
+            size: stat.size,
+            mtime: stat.mtimeMs,
+          })
+          wm.save()
+          onProgress({ phase: 'Parsing logs', tool, current: toolIndex, total: toolTotal, records: parsedCount, toolCalls: toolCallCount })
+          continue
+        }
+
+        // Gemini CLI .json chat snapshots carry the same token fields as the
+        // JSONL chats (top-level tokens object per assistant row). The generic
+        // line splitter cannot read pretty-printed JSON, so parse whole-file.
+        if (tool === 'gemini' && filePath.endsWith('.json')) {
+          try {
+            const parsedJson: unknown = JSON.parse(readFileSync(filePath, 'utf-8'))
+            const messages: unknown[] = Array.isArray(parsedJson)
+              ? parsedJson
+              : Array.isArray((parsedJson as { messages?: unknown }).messages)
+                ? (parsedJson as { messages: unknown[] }).messages
+                : [parsedJson]
+            const jsonSessionId = extractSessionId(filePath, tool)
+            const now = Date.now()
+            messages.forEach((message, index) => {
+              if (!message || typeof message !== 'object') return
+              const result = aggregator.parseLine(JSON.stringify(message), aggregator.createContext({
+                tool,
+                sourceFile: filePath,
+                lineOffset: index,
+                sessionId: jsonSessionId,
+                device,
+                deviceInstanceId,
+                platform: devicePlatform,
+                exchangeRate,
+              }))
+              if (result) {
+                if (result.record) {
+                  insertParsedRecord(db, result)
+                  parsedCount++
+                }
+                for (const tc of result.toolCalls) {
+                  insertToolCall(db, tc)
+                  toolCallCount++
+                }
+              }
+            })
+          } catch (e) {
+            errors.push(`${filePath}: ${e instanceof Error ? e.message : e}`)
           }
           wm.setEntry(tool, filePath, {
             offset: stat.size,

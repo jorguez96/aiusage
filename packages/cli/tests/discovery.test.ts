@@ -280,6 +280,38 @@ describe('discovery path resolution', () => {
     expect(logFiles).toEqual(expect.arrayContaining([ccFile, snapshotFile]))
   })
 
+  it('discovers Gemini CLI jsonl and json chats under tmp (and GEMINI_HOME/tmp)', async () => {
+    const home = makeHome()
+    const chatsDir = join(home, '.gemini', 'tmp', 'aiusage', 'chats')
+    mkdirSync(chatsDir, { recursive: true })
+    const jsonlFile = join(chatsDir, 'session-2026-09-23T22-18-83ac303f.jsonl')
+    const jsonFile = join(chatsDir, 'session-2026-09-23T22-18-83ac303f.json')
+    writeFileSync(jsonlFile, '{}\n')
+    writeFileSync(jsonFile, '{}')
+
+    const { discoverLogFiles, discoverTools } = await loadDiscovery({ home, platform: 'linux' })
+    const detected = discoverTools().find((tool) => tool.sourceKey === 'gemini')
+
+    expect(detected?.status).toBe('found')
+    expect(detected?.fileCount).toBe(2)
+    expect(discoverLogFiles().find((result) => result.tool === 'gemini')?.paths)
+      .toEqual(expect.arrayContaining([jsonlFile, jsonFile]))
+  })
+
+  it('honors GEMINI_HOME when discovering Gemini CLI chats', async () => {
+    const home = makeHome()
+    const geminiHome = join(home, 'custom-gemini')
+    const chatsDir = join(geminiHome, 'tmp', 'proj', 'chats')
+    mkdirSync(chatsDir, { recursive: true })
+    const chatFile = join(chatsDir, 'session-1.jsonl')
+    writeFileSync(chatFile, '{}\n')
+    process.env.GEMINI_HOME = geminiHome
+
+    const { discoverLogFiles } = await loadDiscovery({ home, platform: 'linux' })
+
+    expect(discoverLogFiles().find((result) => result.tool === 'gemini')?.paths).toEqual([chatFile])
+  })
+
   it('lists all detected OpenCode channel databases', async () => {
     const home = makeHome()
     const opencodeDir = join(home, '.local', 'share', 'opencode')

@@ -67,6 +67,14 @@ function findJsonlFiles(dir: string): string[] {
   return results
 }
 
+// Gemini CLI 0.60 writes session JSONL under tmp/<project>/chats/ and may
+// also write .json chats with the same token fields. Non-chat files without
+// tokens (e.g. logs.json) are harmless: the parser only accepts rows with a
+// top-level tokens object.
+function findGeminiChatFiles(dir: string): string[] {
+  return unique([...findJsonlFiles(dir), ...findJsonFiles(dir)])
+}
+
 function findQoderSegmentFiles(dir: string): string[] {
   return findJsonlFiles(dir).filter((filePath) => {
     const parts = filePath.replace(/\\/g, '/').split('/').filter(Boolean)
@@ -831,6 +839,8 @@ export function discoverTools(env: NodeJS.ProcessEnv = process.env): DetectedToo
               fileCount += unique([...findJsonlFiles(detectedPath), ...findJsonFiles(detectedPath)]).length
             } else if (entry.sourceKey === 'grok') {
               fileCount += findJsonlFiles(detectedPath).filter((p) => basename(p) === 'updates.jsonl').length
+            } else if (entry.sourceKey === 'gemini') {
+              fileCount += findGeminiChatFiles(detectedPath).length
             } else {
               fileCount += findJsonlFiles(detectedPath).length
             }
@@ -969,7 +979,9 @@ export function discoverLogFiles(env: NodeJS.ProcessEnv = process.env): { tool: 
     if (!source.path || !existsSync(source.path)) continue
     let paths = source.tool === 'kiro'
       ? [...findJsonlFiles(source.path), ...findJsonFiles(source.path)]
-      : findJsonlFiles(source.path)
+      : source.tool === 'gemini'
+        ? findGeminiChatFiles(source.path)
+        : findJsonlFiles(source.path)
     if (source.filter) paths = paths.filter(source.filter)
     if (paths.length > 0) results.push({ tool: source.tool, paths: unique(paths) })
   }
