@@ -4,13 +4,13 @@
  * Reads local OAuth credentials for each AI tool and queries their official
  * usage APIs to get real-time quota utilization.
  *
- * Supported tools: claude-code, codex
+ * Supported tools: claude-code, codex, copilot, gemini (via agy CLI)
  */
 
 import { readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir, platform } from 'node:os'
-import { execSync } from 'node:child_process'
+import { execSync, execFileSync } from 'node:child_process'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -494,6 +494,149 @@ async function callCopilotQuotaApi(token: string): Promise<QuotaResult> {
   }
 }
 
+// ── Gemini (Antigravity) credential reading ──────────────────────────────────
+// The agy CLI manages its own auth; presence of the CLI on PATH is the
+// credential signal. Absence → not_found so the card renders in the inactive
+// list instead of crashing.
+
+function readGeminiCredentials(): { status: CredentialStatus; message: string | null } {
+  const probe = platform() === 'win32' ? 'where agy' : 'command -v agy'
+  try {
+    execSync(probe, { timeout: 3000, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] })
+    return { status: 'valid', message: null }
+  } catch {
+    return { status: 'not_found', message: null }
+  }
+}
+
+// ── Gemini (Antigravity) quota query ─────────────────────────────────────────
+// Replicates the agy CLI quota read from quota-axi's agy provider: run
+// `agy -p /quota --output-format json` and map the Gemini Models buckets to
+// card tiers. Claude/GPT buckets are intentionally left out.
+
+const AGY_QUOTA_TIMEOUT_MS = 15000
+
+function agySlug(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+}
+
+function agyNumber(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return undefined
+}
+
+function agyObject(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : undefined
+}
+
+function agyRemainingFraction(bucket: Record<string, unknown>): number | undefined {
+  const direct = agyNumber(bucket['remainingFraction'] ?? bucket['remaining_fraction'])
+  if (direct !== undefined) return direct
+  const remaining = bucket['remaining']
+  if (typeof remaining === 'number' || typeof remaining === 'string') return agyNumber(remaining)
+  const nested = agyObject(remaining)
+  if (!nested) return undefined
+  return agyNumber(nested['remainingFraction'] ?? nested['remaining_fraction'] ?? nested['value'])
+}
+
+function agyResetIso(bucket: Record<string, unknown>): string | null {
+  const raw = bucket['resetTime'] ?? bucket['reset_time']
+  if (typeof raw !== 'string' || !raw.trim()) return null
+  const ts = Date.parse(raw.trim())
+  if (!Number.isFinite(ts)) return null
+  return new Date(ts).toISOString()
+}
+
+/** Map an agy bucket to a card tier name, or null when it is not a Gemini window. */
+function agyTierName(groupName: string, bucket: Record<string, unknown>): string | null {
+  const bucketId = bucket['bucketId'] ?? bucket['bucket_id'] ?? bucket['id']
+  if (typeof bucketId !== 'string' || !bucketId) return null
+  if (!`${groupName} ${bucketId}`.toLowerCase().includes('gemini')) return null
+  const raw = [bucket['window'], bucket['bucketId'], bucket['bucket_id'], bucket['displayName'], bucket['name']]
+    .filter((v): v is string => typeof v === 'string')
+    .join(' ')
+    .toLowerCase()
+  if (raw.includes('5h') || raw.includes('five')) return 'gemini_5h'
+  if (raw.includes('week')) return 'gemini_weekly'
+  return `gemini_${agySlug(bucketId) || 'quota'}`
+}
+
+/**
+ * Parse `agy -p /quota --output-format json` output into card tiers.
+ * Returns null when the payload is not a usage/quota response.
+ */
+export function parseAgyQuotaOutput(text: string): QuotaTier[] | null {
+  let root: unknown
+  try {
+    root = JSON.parse(text)
+  } catch {
+    return null
+  }
+  const command = agyObject(agyObject(root)?.['command'])
+  const name = command?.['name']
+  if (name !== 'usage' && name !== '/usage' && name !== 'quota' && name !== '/quota') return null
+  const data = agyObject(command?.['data'])
+  const groups = data?.['groups']
+  if (!Array.isArray(groups)) return null
+
+  const tiers: QuotaTier[] = []
+  for (const group of groups) {
+    const g = agyObject(group)
+    if (!g) continue
+    const groupName = g['displayName'] ?? g['name']
+    if (typeof groupName !== 'string') continue
+    const buckets = g['buckets']
+    if (!Array.isArray(buckets)) continue
+    for (const bucket of buckets) {
+      const b = agyObject(bucket)
+      if (!b) continue
+      if (b['disabled'] === true) continue
+      const tierName = agyTierName(groupName, b)
+      if (!tierName) continue
+      const remaining = agyRemainingFraction(b)
+      if (remaining === undefined) continue
+      const clamped = Math.min(1, Math.max(0, remaining))
+      tiers.push({ name: tierName, utilization: (1 - clamped) * 100, resetsAt: agyResetIso(b) })
+    }
+  }
+
+  const rank = (tierName: string): number => tierName === 'gemini_5h' ? 0 : tierName === 'gemini_weekly' ? 1 : 2
+  tiers.sort((a, b) => rank(a.name) - rank(b.name))
+  return tiers
+}
+
+async function queryAgyQuota(): Promise<QuotaResult> {
+  let text: string
+  try {
+    text = execFileSync('agy', ['-p', '/quota', '--output-format', 'json'], {
+      timeout: AGY_QUOTA_TIMEOUT_MS,
+      encoding: 'utf8',
+      maxBuffer: 1024 * 1024,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException)?.code === 'ENOENT') return notFound('gemini')
+    return apiError('gemini', `agy /quota failed: ${e instanceof Error ? e.message : String(e)}`)
+  }
+
+  const tiers = parseAgyQuotaOutput(text)
+  if (!tiers) return apiError('gemini', 'agy /quota returned invalid JSON or an unexpected payload')
+  if (tiers.length === 0) return apiError('gemini', 'No Gemini quota windows in agy /quota output')
+  return {
+    tool: 'gemini',
+    credentialStatus: 'valid',
+    credentialMessage: null,
+    success: true,
+    tiers,
+    error: null,
+    queriedAt: nowMs(),
+  }
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /** Query Claude Code official subscription quota */
@@ -540,12 +683,20 @@ export async function queryCopilotQuota(): Promise<QuotaResult> {
   return callCopilotQuotaApi(token)
 }
 
+/** Query Gemini (Antigravity) official subscription quota via the agy CLI */
+export async function queryGeminiQuota(): Promise<QuotaResult> {
+  const cred = readGeminiCredentials()
+  if (cred.status === 'not_found') return notFound('gemini')
+  return queryAgyQuota()
+}
+
 /** Query all supported tools in parallel */
 export async function queryAllQuotas(): Promise<QuotaResult[]> {
-  const [claude, codex, copilot] = await Promise.all([
+  const [claude, codex, copilot, gemini] = await Promise.all([
     queryClaudeCodeQuota(),
     queryCodexQuota(),
     queryCopilotQuota(),
+    queryGeminiQuota(),
   ])
-  return [claude, codex, copilot]
+  return [claude, codex, copilot, gemini]
 }

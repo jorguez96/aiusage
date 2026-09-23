@@ -14,11 +14,14 @@
     seven_day_sonnet: 'quotas.sevenDaySonnet',
     seven_day_omelette: 'quotas.sevenDayOmelette',
     weekly_limit: 'quotas.weeklyLimit',
+    gemini_5h: 'quotas.gemini5h',
+    gemini_weekly: 'quotas.geminiWeekly',
   }
 
   const TOOL_LABEL_KEYS = {
     'claude-code': 'quotas.toolLabels.claude-code',
     codex: 'quotas.toolLabels.codex',
+    gemini: 'quotas.toolLabels.gemini',
   }
 
   async function load() {
