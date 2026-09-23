@@ -433,10 +433,13 @@ const translations = {
       sevenDaySonnet: '7d Sonnet',
       sevenDayOmelette: '7d Design',
       weeklyLimit: 'Weekly',
+      gemini5h: '5h Window',
+      geminiWeekly: 'Weekly',
       resetsIn: 'resets in {time}',
       toolLabels: {
         'claude-code': 'Claude Code',
         codex: 'Codex (OpenAI)',
+        gemini: 'Gemini',
       },
     },
     leaderboard: {
@@ -961,10 +964,13 @@ const translations = {
       sevenDaySonnet: '7 天 Sonnet',
       sevenDayOmelette: '7 天 Design',
       weeklyLimit: '每周限额',
+      gemini5h: '5 小时窗口',
+      geminiWeekly: '每周限额',
       resetsIn: '{time} 后重置',
       toolLabels: {
         'claude-code': 'Claude Code',
         codex: 'Codex（OpenAI）',
+        gemini: 'Gemini',
       },
     },
     leaderboard: {
