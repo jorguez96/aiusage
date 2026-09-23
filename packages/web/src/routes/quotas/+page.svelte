@@ -22,6 +22,8 @@
     'claude-code': 'quotas.toolLabels.claude-code',
     codex: 'quotas.toolLabels.codex',
     gemini: 'quotas.toolLabels.gemini',
+    opencode: 'quotas.toolLabels.opencode',
+    grok: 'quotas.toolLabels.grok',
   }
 
   async function load() {
@@ -175,6 +177,11 @@
               {#each quota.tiers as tier (tier.name)}
                 {@const pct = Math.min(Math.round(tier.utilization), 100)}
                 {@const countdown = countdownStr(tier.resetsAt)}
+                {@const pace = tier.pace}
+                {@const paceTarget = pace && typeof pace.targetUsagePercent === 'number' ? Math.max(0, Math.min(100, pace.targetUsagePercent)) : null}
+                {@const paceLine = pace && typeof pace.line === 'string' ? pace.line : ''}
+                {@const paceState = pace && typeof pace.state === 'string' ? pace.state : ''}
+                {@const paceDerived = pace && pace.derived === true}
                 <div class="tier-row">
                   <div class="tier-label">
                     <span class="tier-name">{tierLabel(tier.name)}</span>
@@ -188,9 +195,21 @@
                         class="tier-fill"
                         style="width: {pct}%; background: {utilizationBarColor(tier.utilization)}"
                       ></div>
+                      {#if paceTarget != null}
+                        <span
+                          class="tier-pace-mark"
+                          style="left: {paceTarget}%; opacity: {paceDerived ? 0.55 : 1}"
+                        ></span>
+                      {/if}
                     </div>
                     <span class="tier-pct" style="color: {utilizationBarColor(tier.utilization)}">{pct}%</span>
                   </div>
+                  {#if paceLine}
+                    <div
+                      class="tier-pace-line"
+                      style="color: {paceState === 'over' ? 'var(--rose)' : paceState === 'under' ? 'var(--green)' : 'var(--text-muted)'}; opacity: {paceState === 'unknown' ? 0.75 : 1}"
+                    >{paceLine}</div>
+                  {/if}
                 </div>
               {/each}
             </div>
@@ -339,12 +358,30 @@
     background: var(--raised);
     border-radius: 99px;
     overflow: hidden;
+    position: relative;
   }
 
   .tier-fill {
     height: 100%;
     border-radius: 99px;
     transition: width 0.4s ease;
+  }
+
+  .tier-pace-mark {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--accent);
+    transform: translateX(-1px);
+    pointer-events: none;
+  }
+
+  .tier-pace-line {
+    font-size: 0.6875rem;
+    line-height: 1.4;
+    padding-left: 2px;
+    margin-top: 0.1rem;
   }
 
   .tier-pct {
