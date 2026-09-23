@@ -8,6 +8,8 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 
 - Grok file watermarks are invalidated by `CURRENT_GROK_PARSER_VERSION` in `packages/cli/src/watermark.ts`; bump it whenever Grok token accounting changes so existing logs are replayed.
 
+- Gemini CLI 0.60 chats live under `~/.gemini/tmp` (`GEMINI_HOME/tmp`) and are parsed by `GeminiParser` in `packages/core/src/parsers/gemini.ts`; the CLI persists each assistant message twice under the same id (plain, then `toolCalls`-enriched), so the parser dedupes by message id and counts usage once.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.

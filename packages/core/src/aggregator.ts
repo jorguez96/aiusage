@@ -6,6 +6,7 @@ import { CodeFuseParser } from './parsers/codefuse.js'
 import { OpenClawParser } from './parsers/openclaw.js'
 import { QoderParser } from './parsers/qoder.js'
 import { CopilotParser } from './parsers/copilot.js'
+import { GeminiParser } from './parsers/gemini.js'
 import { GenericJsonlParser } from './parsers/generic-jsonl.js'
 import { GrokParser } from './parsers/grok.js'
 
@@ -33,7 +34,7 @@ export class Aggregator {
       ['openclaw', new OpenClawParser()],
       ['qoder', new QoderParser()],
       ['copilot', new CopilotParser()],
-      ['gemini', new GenericJsonlParser('gemini', 'gemini-unknown')],
+      ['gemini', new GeminiParser()],
       ['kimi', new GenericJsonlParser('kimi', 'kimi-for-coding')],
       ['codebuddy', new GenericJsonlParser('codebuddy', 'codebuddy-unknown')],
       ['grok', new GrokParser()],
