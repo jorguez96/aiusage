@@ -440,6 +440,8 @@ const translations = {
         'claude-code': 'Claude Code',
         codex: 'Codex (OpenAI)',
         gemini: 'Gemini',
+        opencode: 'OpenCode',
+        grok: 'Grok',
       },
     },
     leaderboard: {
@@ -971,6 +973,8 @@ const translations = {
         'claude-code': 'Claude Code',
         codex: 'Codex（OpenAI）',
         gemini: 'Gemini',
+        opencode: 'OpenCode',
+        grok: 'Grok',
       },
     },
     leaderboard: {
