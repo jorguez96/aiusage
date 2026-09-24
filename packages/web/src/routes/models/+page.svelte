@@ -91,6 +91,9 @@
   <div class="state-msg">
     <h2>{$t('models.noData')}</h2>
     <p>{$t('models.noDataHint')}</p>
+    {#if $selectedTool}
+      <p>{$t('common.toolIdleHint').replace('{tool}', $selectedTool)}</p>
+    {/if}
   </div>
 {:else}
   <div class="card">

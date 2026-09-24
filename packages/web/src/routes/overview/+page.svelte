@@ -61,6 +61,9 @@
   <div class="state-msg">
     <h2>{$t('common.noData')}</h2>
     <p>{$t('common.noDataHint')}</p>
+    {#if $selectedTool}
+      <p>{$t('common.toolIdleHint').replace('{tool}', $selectedTool)}</p>
+    {/if}
   </div>
 {:else}
   <div class="hero-stats">
@@ -110,7 +113,13 @@
       <div class="section-title">{$t('overview.byTool')}</div>
       {#if Object.keys(data.byTool).length === 0}
         <p class="muted">{$t('overview.noToolData')}</p>
+        {#if $selectedTool}
+          <p class="muted">{$t('common.toolIdleHint').replace('{tool}', $selectedTool)}</p>
+        {/if}
       {:else}
+        {#if $selectedTool && !data.byTool[$selectedTool]}
+          <p class="muted">{$t('common.toolIdleHint').replace('{tool}', $selectedTool)}</p>
+        {/if}
         <table>
           <thead>
             <tr>

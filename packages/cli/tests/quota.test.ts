@@ -3,11 +3,14 @@ import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execSync, execFileSync } from 'node:child_process'
-import { parseAgyQuotaOutput, queryGeminiQuota, queryGrokBridgeQuota, queryOpencodeBridgeQuota, queryAllQuotas, paceForWindow, mergeBridgePace } from '../src/quota.js'
+import { parseAgyQuotaOutput, queryGeminiQuota, queryGrokBridgeQuota, queryOpencodeBridgeQuota, queryAllQuotas, paceForWindow, mergeBridgePace, resolveAgyBinary, agyWellKnownPaths, AIUSAGE_AGY_PATH_ENV } from '../src/quota.js'
 
 vi.mock('node:child_process')
 
-const { bridgeFile } = vi.hoisted(() => ({ bridgeFile: { content: null as string | null } }))
+const { bridgeFile, agyFallback } = vi.hoisted(() => ({
+  bridgeFile: { content: null as string | null },
+  agyFallback: { paths: null as Set<string> | null },
+}))
 
 // The bridge providers read exactly <AIUSAGE_DIR>/quota-bridge.json via
 // readFileSync; serve that single path from hoisted state so each test controls
@@ -18,6 +21,7 @@ vi.mock('node:fs', async (importOriginal) => {
   const path = await import('node:path')
   const bridgePath = path.join(os.homedir(), '.aiusage', 'quota-bridge.json')
   const realReadFileSync = actual.readFileSync as (...args: any[]) => any
+  const realExistsSync = actual.existsSync as (...args: any[]) => boolean
   return {
     ...actual,
     readFileSync: (...args: any[]) => {
@@ -29,6 +33,17 @@ vi.mock('node:fs', async (importOriginal) => {
       }
       return realReadFileSync(...args)
     },
+    // Deterministic agy fallback: well-known agy binaries are absent unless a
+    // test opts in via agyFallback.paths. All other paths pass through.
+    existsSync: ((p: any, ...rest: any[]) => {
+      const s = String(p)
+      const base = path.basename(s)
+      if (base === 'agy' || base === 'agy.exe') {
+        if (agyFallback.paths) return agyFallback.paths.has(s)
+        return false
+      }
+      return (realExistsSync as any)(p, ...rest)
+    }) as typeof actual.existsSync,
   }
 })
 
@@ -111,10 +126,14 @@ describe('queryGeminiQuota', () => {
   beforeEach(() => {
     vi.resetAllMocks()
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')))
+    agyFallback.paths = null
+    delete process.env[AIUSAGE_AGY_PATH_ENV]
   })
 
   afterEach(() => {
     vi.unstubAllGlobals()
+    agyFallback.paths = null
+    delete process.env[AIUSAGE_AGY_PATH_ENV]
   })
 
   it('returns not_found when the agy CLI is absent', async () => {
@@ -154,6 +173,112 @@ describe('queryGeminiQuota', () => {
     mockExecFileSync.mockImplementation(() => { throw Object.assign(new Error('spawn agy ENOENT'), { code: 'ENOENT' }) })
     const result = await queryGeminiQuota()
     expect(result).toMatchObject({ tool: 'gemini', credentialStatus: 'not_found', success: false })
+  })
+})
+
+describe('resolveAgyBinary', () => {
+  beforeEach(() => {
+    vi.resetAllMocks()
+    agyFallback.paths = null
+    delete process.env[AIUSAGE_AGY_PATH_ENV]
+  })
+
+  afterEach(() => {
+    agyFallback.paths = null
+    delete process.env[AIUSAGE_AGY_PATH_ENV]
+  })
+
+  it('lists the well-known fallback locations', () => {
+    const paths = agyWellKnownPaths('/home/test')
+    expect(paths).toContain('/home/test/.local/bin/agy')
+    expect(paths).toContain('/opt/homebrew/bin/agy')
+    expect(paths.some((p) => p.includes('agy') && p.includes('bin'))).toBe(true)
+  })
+
+  it('prefers the AIUSAGE_AGY_PATH override when it exists', () => {
+    const override = '/tmp/aiusage-agy-test/agy'
+    agyFallback.paths = new Set([override])
+    process.env[AIUSAGE_AGY_PATH_ENV] = override
+    mockExecSync.mockImplementation(() => { throw new Error('command not found') })
+    expect(resolveAgyBinary()).toEqual({ bin: override, reason: null })
+  })
+
+  it('falls back to a well-known location when agy is off PATH', () => {
+    mockExecSync.mockImplementation(() => { throw new Error('command not found') })
+    const [candidate] = agyWellKnownPaths()
+    agyFallback.paths = new Set([candidate])
+    expect(resolveAgyBinary()).toEqual({ bin: candidate, reason: null })
+  })
+
+  it('explains the probe when nothing is found, naming a missing override', () => {
+    mockExecSync.mockImplementation(() => { throw new Error('command not found') })
+    process.env[AIUSAGE_AGY_PATH_ENV] = '/tmp/aiusage-agy-missing/agy'
+    const resolved = resolveAgyBinary()
+    expect(resolved.bin).toBeNull()
+    expect(resolved.reason).toContain('agy CLI not found')
+    expect(resolved.reason).toContain(AIUSAGE_AGY_PATH_ENV)
+    expect(resolved.reason).toContain('/tmp/aiusage-agy-missing/agy')
+  })
+
+  it('points at the override env var when no override is set', () => {
+    mockExecSync.mockImplementation(() => { throw new Error('command not found') })
+    const resolved = resolveAgyBinary()
+    expect(resolved.bin).toBeNull()
+    expect(resolved.reason).toContain(AIUSAGE_AGY_PATH_ENV)
+  })
+})
+
+describe('queryGeminiQuota PATH-robustness', () => {
+  beforeEach(() => {
+    vi.resetAllMocks()
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')))
+    agyFallback.paths = null
+    delete process.env[AIUSAGE_AGY_PATH_ENV]
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    agyFallback.paths = null
+    delete process.env[AIUSAGE_AGY_PATH_ENV]
+  })
+
+  it('queries via the AIUSAGE_AGY_PATH binary when agy is off PATH', async () => {
+    const override = '/tmp/aiusage-agy-test/agy'
+    agyFallback.paths = new Set([override])
+    process.env[AIUSAGE_AGY_PATH_ENV] = override
+    mockExecSync.mockImplementation(() => { throw new Error('command not found') })
+    mockExecFileSync.mockReturnValue(agyOutput as any)
+    const result = await queryGeminiQuota()
+    expect(result).toMatchObject({ tool: 'gemini', credentialStatus: 'valid', success: true })
+    expect(mockExecFileSync).toHaveBeenCalledWith(
+      override,
+      ['-p', '/quota', '--output-format', 'json'],
+      expect.objectContaining({ timeout: 15000 }),
+    )
+  })
+
+  it('queries via a well-known location when agy is off PATH', async () => {
+    mockExecSync.mockImplementation(() => { throw new Error('command not found') })
+    const [candidate] = agyWellKnownPaths()
+    agyFallback.paths = new Set([candidate])
+    mockExecFileSync.mockReturnValue(agyOutput as any)
+    const result = await queryGeminiQuota()
+    expect(result).toMatchObject({ tool: 'gemini', credentialStatus: 'valid', success: true })
+    expect(result.tiers.map(t => t.name)).toEqual(['gemini_5h', 'gemini_weekly'])
+    expect(mockExecFileSync).toHaveBeenCalledWith(
+      candidate,
+      ['-p', '/quota', '--output-format', 'json'],
+      expect.objectContaining({ timeout: 15000 }),
+    )
+  })
+
+  it('states the probe cause in the not_found message', async () => {
+    mockExecSync.mockImplementation(() => { throw new Error('command not found') })
+    const result = await queryGeminiQuota()
+    expect(result).toMatchObject({ tool: 'gemini', credentialStatus: 'not_found', success: false, tiers: [] })
+    expect(result.credentialMessage).toContain('agy CLI not found')
+    expect(result.credentialMessage).toContain(AIUSAGE_AGY_PATH_ENV)
+    expect(mockExecFileSync).not.toHaveBeenCalled()
   })
 })
 

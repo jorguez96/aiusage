@@ -222,7 +222,7 @@
   <!-- Inactive tools (no credentials) -->
   {#if inactiveQuotas.length > 0}
     <div class="section-title" style="margin-top: {activeQuotas.length > 0 ? '2rem' : '0'}">
-      {$t('common.noData')}
+      {$t('quotas.inactiveTitle')}
     </div>
     <div class="inactive-list">
       {#each inactiveQuotas as quota (quota.tool)}
@@ -230,7 +230,11 @@
           <span class="tool-name">{toolLabel(quota.tool)}</span>
           <div class="inactive-hint">
             <span class="hint-icon">○</span>
-            <span>{$t('quotas.noCredentials')} — {$t('quotas.noCredentialsHint')}</span>
+            {#if quota.credentialMessage}
+              <span>{quota.credentialMessage}</span>
+            {:else}
+              <span>{$t('quotas.noCredentials')} — {$t('quotas.noCredentialsHint')}</span>
+            {/if}
           </div>
         </div>
       {/each}

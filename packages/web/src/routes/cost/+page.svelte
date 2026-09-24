@@ -105,6 +105,9 @@
   <div class="state-msg">
     <h2>{$t('cost.noData')}</h2>
     <p>{$t('cost.noDataHint')}</p>
+    {#if $selectedTool}
+      <p>{$t('common.toolIdleHint').replace('{tool}', $selectedTool)}</p>
+    {/if}
   </div>
 {:else}
   {@const max = getMaxCost()}

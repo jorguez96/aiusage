@@ -102,6 +102,9 @@
   <div class="state-msg">
     <h2>{$t('toolCalls.noData')}</h2>
     <p>{$t('toolCalls.noDataHint')}</p>
+    {#if $selectedTool}
+      <p>{$t('common.toolIdleHint').replace('{tool}', $selectedTool)}</p>
+    {/if}
   </div>
 {:else}
   <div class="ranking">
