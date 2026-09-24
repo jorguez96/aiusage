@@ -12,6 +12,8 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 
 - The opencode/grok quota cards read `<AIUSAGE_DIR>/quota-bridge.json` (see `packages/cli/src/quota.ts`); refresh it with `aiusage quota-bridge` (`packages/cli/src/commands/quota-bridge.ts`) on a schedule — no in-repo trigger writes it.
 
+- Cross-device usage merges at the record level with `aiusage sync` (S3 backend) against a local s3rver store on the Windows side (`C:\Users\jorgu\.aiusage\s3store`, port 9000; WSL reaches it via the Hyper-V host gateway IP). Serve topology: Linux `:45680` from the fork checkout reads `~/.aiusage/cache.db`; Windows `:3847` from `C:\Users\jorgu\aiusage-fork` reads `C:\Users\jorgu\.aiusage\cache.db`; the 15-min `AIUsage-WSL-Sync` task runs parse+sync on both sides (`wsl-sync.cmd` / `wsl-sync.sh`). Never re-enable session-log rsync across machines: sync ids are per-device, so dual-parsed sessions double-count after merge. Never point the scheduled parse at the upstream package build — only fork builds carry the sync provenance fix. Quota bridge stays on its ~5 min schedule, untouched by sync.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.
