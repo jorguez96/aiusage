@@ -10,6 +10,8 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 
 - Gemini CLI 0.60 chats live under `~/.gemini/tmp` (`GEMINI_HOME/tmp`) and are parsed by `GeminiParser` in `packages/core/src/parsers/gemini.ts`; the CLI persists each assistant message twice under the same id (plain, then `toolCalls`-enriched), so the parser dedupes by message id and counts usage once.
 
+- The opencode/grok quota cards read `<AIUSAGE_DIR>/quota-bridge.json` (see `packages/cli/src/quota.ts`); refresh it with `aiusage quota-bridge` (`packages/cli/src/commands/quota-bridge.ts`) on a schedule — no in-repo trigger writes it.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.

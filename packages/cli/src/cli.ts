@@ -10,6 +10,7 @@ import { exportData } from './commands/export.js'
 import { cleanOldData, cleanAll, getRemoteBackends, propagateClean } from './commands/clean.js'
 import { recalcPricing } from './commands/recalc.js'
 import { runParse } from './commands/parse.js'
+import { refreshQuotaBridge } from './commands/quota-bridge.js'
 import { ProgressReporter, SyncProgressReporter } from './progress.js'
 import { launchWidget } from './commands/widget.js'
 import { runLeaderboardLogin } from './commands/leaderboard-login.js'
@@ -321,6 +322,26 @@ program
     const result = recalcPricing(db)
     console.log(`Updated ${result.updatedCount} records, skipped ${result.skippedCount}.`)
     db.close()
+  })
+
+// quota-bridge command
+program
+  .command('quota-bridge')
+  .description('Refresh the quota-bridge snapshot that feeds the opencode/grok cards (schedule every few minutes)')
+  .option('--print', 'Print the snapshot JSON to stdout instead of writing the bridge file')
+  .action((options) => {
+    try {
+      const { path, snapshot } = refreshQuotaBridge({ write: options.print !== true })
+      if (options.print) {
+        console.log(JSON.stringify(snapshot))
+        return
+      }
+      const keys = Object.keys(snapshot.providers).join(',')
+      console.log(`✓ Quota bridge refreshed — providers: ${keys} → ${path}`)
+    } catch (e) {
+      console.error(`✗ Quota bridge refresh failed: ${e instanceof Error ? e.message : e}`)
+      process.exit(1)
+    }
   })
 
 // serve command

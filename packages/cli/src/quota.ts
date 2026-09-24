@@ -704,12 +704,14 @@ async function queryAgyQuota(bin: string = 'agy'): Promise<QuotaResult> {
 // snapshot to <AIUSAGE_DIR>/quota-bridge.json. These providers only read that
 // snapshot — they never call a vendor quota API.
 //
-// Snapshot shape (written by the bridge task, never by this file):
+// Snapshot shape (written by refreshQuotaBridge in ./commands/quota-bridge.js,
+// never by this file):
 //   { bridgeVersion, updatedAt: <ms epoch>,
 //     providers: { [providerKey]: { windows?: [{ id, label, kind,
 //       percentRemaining, resetsAt }], error?: string } } }
 
-const QUOTA_BRIDGE_PATH = join(AIUSAGE_DIR, 'quota-bridge.json')
+/** Bridge snapshot path, shared with the quota-bridge writer command. */
+export const QUOTA_BRIDGE_PATH = join(AIUSAGE_DIR, 'quota-bridge.json')
 
 interface BridgeWindow {
   id?: unknown
