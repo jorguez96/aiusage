@@ -60,8 +60,8 @@ function nowMs(): number {
   return Date.now()
 }
 
-function notFound(tool: string): QuotaResult {
-  return { tool, credentialStatus: 'not_found', credentialMessage: null, success: false, tiers: [], error: null, queriedAt: null }
+function notFound(tool: string, message: string | null = null): QuotaResult {
+  return { tool, credentialStatus: 'not_found', credentialMessage: message, success: false, tiers: [], error: null, queriedAt: null }
 }
 
 function parseError(tool: string, message: string): QuotaResult {
@@ -514,18 +514,57 @@ async function callCopilotQuotaApi(token: string): Promise<QuotaResult> {
 }
 
 // ── Gemini (Antigravity) credential reading ──────────────────────────────────
-// The agy CLI manages its own auth; presence of the CLI on PATH is the
-// credential signal. Absence → not_found so the card renders in the inactive
-// list instead of crashing.
+// The agy CLI manages its own auth; presence of the CLI is the credential
+// signal. The dashboard server often runs with a minimal PATH (launcher,
+// daemon, fresh shell), so before reporting not_found fall back to
+// well-known install locations plus an AIUSAGE_AGY_PATH override. The
+// resolved probe reason is returned as the not_found message so the
+// inactive card states the cause instead of a generic "no credentials".
 
-function readGeminiCredentials(): { status: CredentialStatus; message: string | null } {
+export const AIUSAGE_AGY_PATH_ENV = 'AIUSAGE_AGY_PATH'
+
+/** Well-known agy install locations checked when the binary is not on PATH. Exported for tests. */
+export function agyWellKnownPaths(home: string = homedir(), localAppData?: string): string[] {
+  const exe = platform() === 'win32' ? 'agy.exe' : 'agy'
+  const lad = localAppData ?? process.env.LOCALAPPDATA ?? join(home, 'AppData', 'Local')
+  return [
+    join(home, '.local', 'bin', exe),
+    '/opt/homebrew/bin/agy',
+    join(lad, 'agy', 'bin', exe),
+  ]
+}
+
+/** Resolve the agy binary: AIUSAGE_AGY_PATH override → PATH probe → well-known locations. Exported for tests. */
+export function resolveAgyBinary(): { bin: string | null; reason: string | null } {
+  const override = process.env[AIUSAGE_AGY_PATH_ENV]?.trim()
+  if (override && existsSync(override)) {
+    return { bin: override, reason: null }
+  }
   const probe = platform() === 'win32' ? 'where agy' : 'command -v agy'
   try {
     execSync(probe, { timeout: 3000, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] })
-    return { status: 'valid', message: null }
+    return { bin: 'agy', reason: null }
   } catch {
-    return { status: 'not_found', message: null }
+    // Not on PATH — fall through to well-known locations.
   }
+  for (const candidate of agyWellKnownPaths()) {
+    try {
+      if (existsSync(candidate)) return { bin: candidate, reason: null }
+    } catch {
+      continue
+    }
+  }
+  const checked = agyWellKnownPaths().join(', ')
+  const reason = override
+    ? `agy CLI not found on PATH (${AIUSAGE_AGY_PATH_ENV} points to a missing file: ${override}); checked ${checked}.`
+    : `agy CLI not found on PATH; checked ${checked}. Set ${AIUSAGE_AGY_PATH_ENV} to the agy binary to override.`
+  return { bin: null, reason }
+}
+
+function readGeminiCredentials(): { status: CredentialStatus; message: string | null; bin: string | null } {
+  const resolved = resolveAgyBinary()
+  if (resolved.bin) return { status: 'valid', message: null, bin: resolved.bin }
+  return { status: 'not_found', message: resolved.reason, bin: null }
 }
 
 // ── Gemini (Antigravity) quota query ─────────────────────────────────────────
@@ -628,17 +667,19 @@ export function parseAgyQuotaOutput(text: string): QuotaTier[] | null {
   return tiers
 }
 
-async function queryAgyQuota(): Promise<QuotaResult> {
+async function queryAgyQuota(bin: string = 'agy'): Promise<QuotaResult> {
   let text: string
   try {
-    text = execFileSync('agy', ['-p', '/quota', '--output-format', 'json'], {
+    text = execFileSync(bin, ['-p', '/quota', '--output-format', 'json'], {
       timeout: AGY_QUOTA_TIMEOUT_MS,
       encoding: 'utf8',
       maxBuffer: 1024 * 1024,
       stdio: ['pipe', 'pipe', 'pipe'],
     })
   } catch (e) {
-    if ((e as NodeJS.ErrnoException)?.code === 'ENOENT') return notFound('gemini')
+    if ((e as NodeJS.ErrnoException)?.code === 'ENOENT') {
+      return notFound('gemini', `agy CLI not found at ${bin}; set ${AIUSAGE_AGY_PATH_ENV} to the agy binary to override.`)
+    }
     return apiError('gemini', `agy /quota failed: ${e instanceof Error ? e.message : String(e)}`)
   }
 
@@ -903,8 +944,8 @@ export async function queryCopilotQuota(): Promise<QuotaResult> {
 /** Query Gemini (Antigravity) official subscription quota via the agy CLI */
 export async function queryGeminiQuota(): Promise<QuotaResult> {
   const cred = readGeminiCredentials()
-  if (cred.status === 'not_found') return notFound('gemini')
-  return queryAgyQuota()
+  if (cred.status === 'not_found') return notFound('gemini', cred.message)
+  return queryAgyQuota(cred.bin ?? 'agy')
 }
 
 /** Query OpenCode official subscription quota via the quota-bridge snapshot */

@@ -106,6 +106,9 @@
   <div class="state-msg">
     <h2>{$t('tokens.noData')}</h2>
     <p>{$t('tokens.noDataHint')}</p>
+    {#if $selectedTool}
+      <p>{$t('common.toolIdleHint').replace('{tool}', $selectedTool)}</p>
+    {/if}
   </div>
 {:else}
   {@const max = getMaxTokens()}
