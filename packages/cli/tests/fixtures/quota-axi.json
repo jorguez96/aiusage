@@ -1,0 +1,154 @@
+{
+ "generatedAt": "2026-09-24T16:25:39.218Z",
+ "schemaVersion": 5,
+ "providers": [
+  {
+   "provider": "opencode-go",
+   "plan": "OpenCode Go",
+   "windows": [
+    {
+     "id": "rolling",
+     "label": "rolling",
+     "kind": "unknown",
+     "percentRemaining": 99,
+     "resetsAt": "2026-09-24T18:22:49.478Z",
+     "pace": {
+      "status": "behind",
+      "reservePercentPoints": 59.943,
+      "burnMultiple": 0.0164
+     }
+    },
+    {
+     "id": "weekly",
+     "label": "weekly",
+     "kind": "weekly",
+     "percentRemaining": 98,
+     "resetsAt": "2026-09-28T00:00:00.000Z",
+     "pace": {
+      "status": "behind",
+      "reservePercentPoints": 50.6355,
+      "burnMultiple": 0.038
+     }
+    },
+    {
+     "id": "monthly",
+     "label": "monthly",
+     "kind": "monthly",
+     "percentRemaining": 62,
+     "resetsAt": "2026-10-03T12:25:17.000Z",
+     "pace": {
+      "status": "behind",
+      "reservePercentPoints": 32.5564,
+      "burnMultiple": 0.5386
+     }
+    }
+   ],
+   "state": {
+    "status": "fresh",
+    "stale": false
+   },
+   "accountKeys": [
+    "default"
+   ],
+   "quotaSemantics": {
+    "status": "known",
+    "effectiveAvailability": []
+   }
+  },
+  {
+   "provider": "grok",
+   "windows": [
+    {
+     "id": "credits",
+     "label": "week",
+     "kind": "weekly",
+     "percentRemaining": 79,
+     "resetsAt": "2026-09-30T15:56:03.000Z",
+     "pace": {
+      "status": "ahead",
+      "reservePercentPoints": -6.4206,
+      "burnMultiple": 1.4404
+     }
+    },
+    {
+     "id": "product:grok_build",
+     "label": "Grok Build",
+     "kind": "weekly",
+     "percentRemaining": 79,
+     "resetsAt": "2026-09-30T15:56:03.000Z",
+     "pace": {
+      "status": "ahead",
+      "reservePercentPoints": -6.4206,
+      "burnMultiple": 1.4404
+     }
+    }
+   ],
+   "credits": {
+    "used": 12345
+   },
+   "state": {
+    "status": "fresh",
+    "stale": false,
+    "authStatus": "usable"
+   },
+   "accountKeys": [
+    "default"
+   ],
+   "quotaSemantics": {
+    "status": "known",
+    "effectiveAvailability": []
+   }
+  },
+  {
+   "provider": "claude",
+   "windows": [],
+   "state": {
+    "status": "auth_required",
+    "stale": false,
+    "error": "credentials_invalid"
+   },
+   "accountKeys": [
+    "default"
+   ],
+   "quotaSemantics": {
+    "status": "known",
+    "effectiveAvailability": []
+   }
+  },
+  {
+   "provider": "codex",
+   "plan": "prolite",
+   "windows": [
+    {
+     "id": "weekly",
+     "label": "week",
+     "kind": "weekly",
+     "resetsAt": "2026-09-30T23:03:00.000Z",
+     "percentRemaining": 0,
+     "pace": {
+      "status": "ahead",
+      "reservePercentPoints": -89.6562,
+      "burnMultiple": 9.6676
+     }
+    }
+   ],
+   "credits": {
+    "remaining": 0,
+    "unlimited": false,
+    "unit": "credits"
+   },
+   "state": {
+    "status": "fresh",
+    "stale": false
+   },
+   "accountKeys": [
+    "codex-home",
+    "openai-codex"
+   ],
+   "quotaSemantics": {
+    "status": "known",
+    "effectiveAvailability": []
+   }
+  }
+ ]
+}
