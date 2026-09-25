@@ -302,9 +302,12 @@ describe('queryAllQuotas', () => {
     expect(results.map(r => r.tool)).toEqual(['claude-code', 'codex', 'copilot', 'gemini', 'opencode', 'grok'])
     const gemini = results.find(r => r.tool === 'gemini')!
     expect(gemini.success).toBe(true)
-    expect(gemini.tiers).toHaveLength(2)
-    // Pace merging only touches claude/codex vendor tiers; gemini tiers stay bare.
-    expect(gemini.tiers.every(t => t.pace === undefined)).toBe(true)
+    // Gemini tiers merge pace from the agy bridge snapshot by window id;
+    // unrelated agy windows (claude_gpt_*) are never appended as extra tiers.
+    expect(gemini.tiers.map(t => t.name)).toEqual(['gemini_5h', 'gemini_weekly'])
+    expect(gemini.tiers[0].pace).toMatchObject({ state: 'over', targetUsagePercent: 0 })
+    expect(gemini.tiers[0].pace!.line).toContain('over target')
+    expect(gemini.tiers[1].pace).toMatchObject({ state: 'under' })
     const opencode = results.find(r => r.tool === 'opencode')!
     expect(opencode.success).toBe(true)
     expect(opencode.tiers).toHaveLength(3)
@@ -495,6 +498,26 @@ describe('mergeBridgePace', () => {
       resetsAt: '2026-09-30T00:00:00Z',
       pace: { state: 'hidden', line: '' },
     })
+  })
+
+  it('never appends non-gemini agy windows as extra gemini tiers', () => {
+    useCustomBridge({
+      updatedAt: 1,
+      providers: {
+        agy: {
+          windows: [
+            { id: 'claude_gpt_5h', kind: 'session', label: 'Claude/GPT 5-hour', percentRemaining: 100, resetsAt: null, pace: { status: 'unknown', reason: 'missing_cycle' } },
+            { id: 'claude_gpt_weekly', kind: 'weekly', label: 'Claude/GPT weekly', percentRemaining: 100, resetsAt: null, pace: { status: 'unknown', reason: 'missing_cycle' } },
+          ],
+        },
+      },
+    })
+    const result = vendorResult([{ name: 'gemini_5h', utilization: 30, resetsAt: null }])
+    mergeBridgePace(result, 'agy', { idPrefix: 'gemini_' })
+    // gemini_5h matches nothing (no gemini_ window in the bridge), so it
+    // gets an unknown pace note; the claude_gpt_* windows are not appended.
+    expect(result.tiers).toHaveLength(1)
+    expect(result.tiers[0].pace).toEqual({ state: 'unknown', line: 'no pace target' })
   })
 
   it('leaves unsuccessful results alone and skips tiers that already carry pace', () => {

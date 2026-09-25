@@ -697,7 +697,7 @@ async function queryAgyQuota(bin: string = 'agy'): Promise<QuotaResult> {
   }
 }
 
-// ── Quota-bridge snapshot (opencode + grok) ──────────────────────────────────
+// ── Quota-bridge snapshot (opencode + grok cards, claude/codex/agy pace) ────
 // The dashboard process cannot read the vendor credentials that live next to
 // the vendor CLIs (and Grok's vendor quota endpoint needs token refresh), so
 // a scheduled task polls `quota-axi --json` and writes a compact, secret-free
@@ -816,19 +816,31 @@ const PACE_TIER_KINDS: Record<string, string> = {
   seven_day_sonnet: 'weekly',
   seven_day_omelette: 'weekly',
   weekly_limit: 'weekly',
+  gemini_5h: 'session',
+  gemini_weekly: 'weekly',
 }
 
 function bridgeWindowLabel(w: BridgeWindow): string {
   return typeof w.label === 'string' && w.label.trim() ? w.label.trim() : `${w.id ?? 'window'}`
 }
 
-/** Merge bridge pace targets onto an existing vendor quota result (claude/codex). */
-export function mergeBridgePace(result: QuotaResult, providerKey: string): QuotaResult {
+/**
+ * Merge bridge pace targets onto an existing vendor quota result
+ * (claude/codex/gemini). Unmatched bridge windows are appended as extra
+ * tiers. When `idPrefix` is set, only bridge windows whose id starts with
+ * the prefix are considered at all — the gemini card passes `gemini_` so
+ * unrelated agy windows (e.g. `claude_gpt_5h` / `claude_gpt_weekly`) neither
+ * merge onto gemini tiers by kind nor appear as extra gemini tiers.
+ */
+export function mergeBridgePace(result: QuotaResult, providerKey: string, opts?: { idPrefix?: string }): QuotaResult {
   if (!result || typeof result !== 'object') return result
   if (result.success !== true || !Array.isArray(result.tiers)) return result
   const bridge = readQuotaBridgeSnapshot()
   const entry = bridge ? bridge.providers[providerKey] : null
-  const windows = entry && Array.isArray(entry.windows) ? (entry.windows as BridgeWindow[]) : []
+  const allWindows = entry && Array.isArray(entry.windows) ? (entry.windows as BridgeWindow[]) : []
+  const windows = opts?.idPrefix
+    ? allWindows.filter((w) => w && typeof w.id === 'string' && (w.id as string).startsWith(opts.idPrefix!))
+    : allWindows
   const matched = new Set<BridgeWindow>()
   for (const tier of result.tiers) {
     if (!tier || typeof tier !== 'object' || tier.pace) continue
@@ -972,5 +984,6 @@ export async function queryAllQuotas(): Promise<QuotaResult[]> {
   ])
   mergeBridgePace(claude, 'claude')
   mergeBridgePace(codex, 'codex')
+  mergeBridgePace(gemini, 'agy', { idPrefix: 'gemini_' })
   return [claude, codex, copilot, gemini, opencode, grok]
 }

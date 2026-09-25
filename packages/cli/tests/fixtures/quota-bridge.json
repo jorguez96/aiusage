@@ -1,1 +1,140 @@
-{"bridgeVersion":4,"providers":{"claude":{"windows":[{"id":"five_hour","kind":"session","label":"session","pace":{"burnMultiple":0.5,"reservePercentPoints":10},"percentRemaining":90,"resetsAt":"2026-09-24T03:00:00.000Z"}]},"grok":{"windows":[{"id":"credits","kind":"weekly","label":"week","pace":{"burnMultiple":4.5238,"reservePercentPoints":-16.3579,"status":"ahead"},"percentRemaining":79,"resetsAt":"2026-09-30T15:56:03.000Z"},{"id":"product:grok_build","kind":"weekly","label":"Grok Build","pace":{"burnMultiple":4.5238,"reservePercentPoints":-16.3579,"status":"ahead"},"percentRemaining":79,"resetsAt":"2026-09-30T15:56:03.000Z"}]},"opencode-go":{"plan":"OpenCode Go","windows":[{"id":"five_hour","kind":"session","label":"session","pace":{"burnMultiple":0.051,"reservePercentPoints":18.6082,"status":"behind"},"percentRemaining":99,"resetsAt":"2026-09-24T03:46:36.225Z"},{"id":"weekly","kind":"weekly","label":"weekly","pace":{"burnMultiple":0.0234,"reservePercentPoints":41.7126,"status":"behind"},"percentRemaining":99,"resetsAt":"2026-09-28T00:00:00.000Z"},{"id":"monthly","kind":"monthly","label":"monthly","pace":{"burnMultiple":0.5422,"reservePercentPoints":31.2411,"status":"behind"},"percentRemaining":63,"resetsAt":"2026-10-03T12:25:17.000Z"}]}},"updatedAt":1758670000000}
+{
+ "bridgeVersion": 4,
+ "providers": {
+  "claude": {
+   "windows": [
+    {
+     "id": "five_hour",
+     "kind": "session",
+     "label": "session",
+     "pace": {
+      "burnMultiple": 0.5,
+      "reservePercentPoints": 10
+     },
+     "percentRemaining": 90,
+     "resetsAt": "2026-09-24T03:00:00.000Z"
+    }
+   ]
+  },
+  "grok": {
+   "windows": [
+    {
+     "id": "credits",
+     "kind": "weekly",
+     "label": "week",
+     "pace": {
+      "burnMultiple": 4.5238,
+      "reservePercentPoints": -16.3579,
+      "status": "ahead"
+     },
+     "percentRemaining": 79,
+     "resetsAt": "2026-09-30T15:56:03.000Z"
+    },
+    {
+     "id": "product:grok_build",
+     "kind": "weekly",
+     "label": "Grok Build",
+     "pace": {
+      "burnMultiple": 4.5238,
+      "reservePercentPoints": -16.3579,
+      "status": "ahead"
+     },
+     "percentRemaining": 79,
+     "resetsAt": "2026-09-30T15:56:03.000Z"
+    }
+   ]
+  },
+  "opencode-go": {
+   "plan": "OpenCode Go",
+   "windows": [
+    {
+     "id": "five_hour",
+     "kind": "session",
+     "label": "session",
+     "pace": {
+      "burnMultiple": 0.051,
+      "reservePercentPoints": 18.6082,
+      "status": "behind"
+     },
+     "percentRemaining": 99,
+     "resetsAt": "2026-09-24T03:46:36.225Z"
+    },
+    {
+     "id": "weekly",
+     "kind": "weekly",
+     "label": "weekly",
+     "pace": {
+      "burnMultiple": 0.0234,
+      "reservePercentPoints": 41.7126,
+      "status": "behind"
+     },
+     "percentRemaining": 99,
+     "resetsAt": "2026-09-28T00:00:00.000Z"
+    },
+    {
+     "id": "monthly",
+     "kind": "monthly",
+     "label": "monthly",
+     "pace": {
+      "burnMultiple": 0.5422,
+      "reservePercentPoints": 31.2411,
+      "status": "behind"
+     },
+     "percentRemaining": 63,
+     "resetsAt": "2026-10-03T12:25:17.000Z"
+    }
+   ]
+  },
+  "agy": {
+   "windows": [
+    {
+     "id": "gemini_5h",
+     "kind": "session",
+     "label": "Gemini 5-hour",
+     "pace": {
+      "status": "behind",
+      "reservePercentPoints": -5,
+      "burnMultiple": 2
+     },
+     "percentRemaining": 70,
+     "resetsAt": "2026-09-25T07:43:04.000Z"
+    },
+    {
+     "id": "gemini_weekly",
+     "kind": "weekly",
+     "label": "Gemini weekly",
+     "pace": {
+      "status": "behind",
+      "reservePercentPoints": 10,
+      "burnMultiple": 0.5
+     },
+     "percentRemaining": 90,
+     "resetsAt": "2026-09-30T22:33:28.000Z"
+    },
+    {
+     "id": "claude_gpt_5h",
+     "kind": "session",
+     "label": "Claude/GPT 5-hour",
+     "pace": {
+      "status": "unknown",
+      "reason": "missing_cycle"
+     },
+     "percentRemaining": 100,
+     "resetsAt": "2026-09-25T07:43:04.000Z"
+    },
+    {
+     "id": "claude_gpt_weekly",
+     "kind": "weekly",
+     "label": "Claude/GPT weekly",
+     "pace": {
+      "status": "unknown",
+      "reason": "missing_cycle"
+     },
+     "percentRemaining": 100,
+     "resetsAt": "2026-10-02T02:43:04.000Z"
+    }
+   ]
+  }
+ },
+ "updatedAt": 1758670000000
+}

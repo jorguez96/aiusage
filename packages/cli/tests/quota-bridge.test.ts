@@ -127,6 +127,26 @@ describe('buildQuotaBridgeSnapshot', () => {
     expect(weekly.pace).not.toHaveProperty('suppressed')
   })
 
+  it('maps agy gemini windows with their pace fields', () => {
+    const payload = JSON.stringify({
+      providers: [
+        {
+          provider: 'agy',
+          windows: [
+            { id: 'gemini_5h', label: 'Gemini 5-hour', kind: 'session', percentRemaining: 70, resetsAt: '2026-09-25T07:43:04.000Z', pace: { status: 'behind', reservePercentPoints: -5, burnMultiple: 2 } },
+            { id: 'gemini_weekly', label: 'Gemini weekly', kind: 'weekly', percentRemaining: 90, resetsAt: '2026-09-30T22:33:28.000Z', pace: { status: 'unknown', reason: 'missing_cycle' } },
+            { id: 'claude_gpt_5h', label: 'Claude/GPT 5-hour', kind: 'session', percentRemaining: 100, resetsAt: '2026-09-25T07:43:04.000Z', pace: { status: 'unknown', reason: 'missing_cycle' } },
+          ],
+        },
+      ],
+    })
+    const snapshot = buildQuotaBridgeSnapshot(payload, FIXED_NOW)!
+    const agy = snapshot.providers['agy']
+    expect(agy.windows!.map((w) => w.id)).toEqual(['gemini_5h', 'gemini_weekly', 'claude_gpt_5h'])
+    expect(agy.windows![0].pace).toMatchObject({ status: 'behind', reservePercentPoints: -5, burnMultiple: 2 })
+    expect(agy.windows![1].pace).toMatchObject({ status: 'unknown', reason: 'missing_cycle' })
+  })
+
   it('records the vendor error when a provider reports no windows', () => {
     const snapshot = buildQuotaBridgeSnapshot(axiFixture, FIXED_NOW)!
     // The fixture claude entry is auth_required with credentials_invalid.
@@ -153,11 +173,13 @@ describe('buildQuotaBridgeSnapshot', () => {
         { provider: 'grok', windows: [], state: { status: 'unknown' }, notSetUp: true },
         { provider: 'claude', windows: [], state: { status: 'auth_required' } },
         { provider: 'codex', windows: [], state: { status: 'auth_required' } },
+        { provider: 'agy', windows: [], state: { status: 'auth_required' }, notSetUp: true },
       ],
     })
     const snapshot = buildQuotaBridgeSnapshot(payload, FIXED_NOW)!
     expect(snapshot.providers['opencode-go']).toEqual({ error: 'auth_required' })
     expect(snapshot.providers['grok']).toEqual({ error: 'provider not set up in quota-axi' })
+    expect(snapshot.providers['agy']).toEqual({ error: 'auth_required' })
   })
 
   it('returns null for invalid JSON or a missing providers array', () => {
@@ -207,7 +229,7 @@ describe('refreshQuotaBridge', () => {
     const { path, snapshot } = refreshQuotaBridge({ bin: '/fake/quota-axi', now: FIXED_NOW })
     expect(mockExecFileSync).toHaveBeenCalledWith(
       '/fake/quota-axi',
-      ['--provider', 'opencode-go,grok,claude,codex', '--json'],
+      ['--provider', 'opencode-go,grok,claude,codex,agy', '--json'],
       expect.objectContaining({ encoding: 'utf8', timeout: QUOTA_BRIDGE_TIMEOUT_MS }),
     )
     expect(path).toBe(QUOTA_BRIDGE_PATH)
