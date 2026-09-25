@@ -1,8 +1,8 @@
-// Scheduled quota-bridge writer (opencode + grok cards, claude/codex pace).
+// Scheduled quota-bridge writer (opencode + grok cards, claude/codex/gemini pace).
 //
 // The dashboard process cannot read the vendor credentials that live next to
 // the vendor CLIs (and Grok's vendor quota endpoint needs token refresh), so
-// this command polls `quota-axi --provider opencode-go,grok,claude,codex
+// this command polls `quota-axi --provider opencode-go,grok,claude,codex,agy
 // --json` and writes the compact, secret-free snapshot that queryBridgeQuota
 // and mergeBridgePace in ../quota.js read from <AIUSAGE_DIR>/quota-bridge.json.
 //
@@ -27,9 +27,9 @@ export const QUOTA_BRIDGE_TIMEOUT_MS = 60000
 
 /**
  * quota-axi provider keys in the snapshot: opencode-go/grok feed their cards,
- * claude/codex feed pace targets merged onto the vendor card tiers.
+ * claude/codex/agy feed pace targets merged onto the vendor card tiers.
  */
-export const QUOTA_BRIDGE_PROVIDERS = ['opencode-go', 'grok', 'claude', 'codex'] as const
+export const QUOTA_BRIDGE_PROVIDERS = ['opencode-go', 'grok', 'claude', 'codex', 'agy'] as const
 
 /** Well-known quota-axi install locations checked when the binary is not on PATH. Exported for tests. */
 export function quotaAxiWellKnownPaths(home: string = homedir()): string[] {
